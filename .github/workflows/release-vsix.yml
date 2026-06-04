@@ -1,6 +1,14 @@
 name: Release VSIX
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build, for example v1.0.0
+        required: true
+  push:
+    tags:
+      - "v*.*.*"
   release:
     types: [published]
 
@@ -14,7 +22,7 @@ jobs:
       - name: Checkout release tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -25,7 +33,7 @@ jobs:
       - name: Validate release version
         shell: bash
         run: |
-          tag="${{ github.event.release.tag_name }}"
+          tag="${{ inputs.tag || github.event.release.tag_name || github.ref_name }}"
           if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Release tag must match v0.0.0, got: $tag"
             exit 1
@@ -45,9 +53,17 @@ jobs:
         run: npm run compile
 
       - name: Package VSIX
-        run: npx vsce package --out "jetpack-language-support-${{ github.event.release.tag_name }}.vsix"
+        run: npx vsce package --out "jetpack-language-support-${{ inputs.tag || github.event.release.tag_name || github.ref_name }}.vsix"
 
       - name: Upload VSIX
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.event.release.tag_name }}" "jetpack-language-support-${{ github.event.release.tag_name }}.vsix" --clobber
+        shell: bash
+        run: |
+          tag="${{ inputs.tag || github.event.release.tag_name || github.ref_name }}"
+          file="jetpack-language-support-${tag}.vsix"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$file" --clobber
+          else
+            gh release create "$tag" "$file" --title "$tag" --notes "VSIX build for $tag"
+          fi
