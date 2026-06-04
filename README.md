@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./assets/jetpack.png" alt="Jetpack"><br>
+<img src="./assets/jetpack.png" alt="Jetpack" width="480"><br>
 
 # Jetpack Language Support
 
