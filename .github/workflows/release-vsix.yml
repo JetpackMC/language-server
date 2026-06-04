@@ -75,7 +75,7 @@ jobs:
           fi
 
       - name: Publish to VS Code Marketplace
-        if: github.event_name == 'release' || inputs.publish_marketplace == true
+        if: github.event_name == 'push' || github.event_name == 'release' || inputs.publish_marketplace == true
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         shell: bash
