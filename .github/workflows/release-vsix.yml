@@ -4,11 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build, for example v1.0.0
+        description: Release tag to build, for example 1.0.0
         required: true
+      publish_marketplace:
+        description: Publish the built VSIX to the VS Code Marketplace
+        required: false
+        default: false
+        type: boolean
   push:
     tags:
       - "v*.*.*"
+      - "*.*.*"
   release:
     types: [published]
 
@@ -34,8 +40,8 @@ jobs:
         shell: bash
         run: |
           tag="${{ inputs.tag || github.event.release.tag_name || github.ref_name }}"
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Release tag must match v0.0.0, got: $tag"
+          if [[ ! "$tag" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must match 0.0.0 or v0.0.0, got: $tag"
             exit 1
           fi
 
@@ -67,3 +73,18 @@ jobs:
           else
             gh release create "$tag" "$file" --title "$tag" --notes "VSIX build for $tag"
           fi
+
+      - name: Publish to VS Code Marketplace
+        if: github.event_name == 'release' || inputs.publish_marketplace == true
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        shell: bash
+        run: |
+          if [[ -z "${VSCE_PAT:-}" ]]; then
+            echo "VSCE_PAT secret is required to publish to the VS Code Marketplace."
+            exit 1
+          fi
+
+          tag="${{ inputs.tag || github.event.release.tag_name || github.ref_name }}"
+          file="jetpack-language-support-${tag}.vsix"
+          npx vsce publish --packagePath "$file" --pat "$VSCE_PAT" --skip-duplicate
