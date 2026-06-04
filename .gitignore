@@ -1,0 +1,16 @@
+node_modules/
+client/node_modules/
+server/node_modules/
+
+out/
+client/out/
+server/out/
+*.tsbuildinfo
+
+*.vsix
+*.tgz
+.vscode-test/
+
+.DS_Store
+Thumbs.db
+npm-debug.log*

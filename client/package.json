@@ -1,0 +1,13 @@
+{
+  "name": "jetpack-language-client",
+  "version": "0.1.0",
+  "description": "VS Code client for the Jetpack language server.",
+  "license": "MIT",
+  "main": "out/extension.js",
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.84.0"
+  }
+}

@@ -1,0 +1,219 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Jetpack",
+  "scopeName": "source.jetpack",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#annotations" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#operators" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.jetpack",
+          "begin": "//",
+          "end": "$"
+        },
+        {
+          "name": "comment.block.jetpack",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "annotations": {
+      "name": "meta.annotation.jetpack",
+      "begin": "(@)([A-Za-z_][A-Za-z0-9_]*)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.annotation.jetpack" },
+        "2": { "name": "entity.name.function.annotation.jetpack" }
+      },
+      "end": "$|(?=//)|(?=/\\*)",
+      "patterns": [
+        { "include": "#strings" },
+        { "include": "#numbers" }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(function)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.function.jetpack" },
+            "2": { "name": "entity.name.function.jetpack" }
+          }
+        },
+        {
+          "match": "\\b(command|interval)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.jetpack" },
+            "2": { "name": "entity.name.function.jetpack" }
+          }
+        },
+        {
+          "match": "\\b(listener)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.jetpack" },
+            "2": { "name": "entity.name.type.event.jetpack" },
+            "3": { "name": "entity.name.function.jetpack" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.jetpack",
+          "match": "\\b(if|else|while|foreach|in|break|continue|return|try|catch|finally|thread|to|until)\\b"
+        },
+        {
+          "name": "storage.modifier.jetpack",
+          "match": "\\b(const|public|private|protected)\\b"
+        },
+        {
+          "name": "keyword.declaration.jetpack",
+          "match": "\\b(function|interval|listener|command|default|manifest)\\b"
+        },
+        {
+          "name": "keyword.control.import.jetpack",
+          "match": "\\b(using|as)\\b"
+        },
+        {
+          "name": "support.type.exception.jetpack",
+          "match": "\\b(Exception|RuntimeException|TypeException|NameException|IndexException|KeyException|ArgumentException|ArithmeticException|StateException|PermissionException|NativeException|ModuleException)\\b"
+        }
+      ]
+    },
+    "types": {
+      "name": "storage.type.jetpack",
+      "match": "\\b(int|float|string|bool|list|object|var)\\b"
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.jetpack",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.null.jetpack",
+          "match": "\\bnull\\b"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        { "include": "#interpolated-string" },
+        {
+          "name": "string.quoted.double.jetpack",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [{ "include": "#string-escape" }]
+        },
+        {
+          "name": "string.quoted.single.jetpack",
+          "begin": "'",
+          "end": "'",
+          "patterns": [{ "include": "#string-escape" }]
+        }
+      ]
+    },
+    "interpolated-string": {
+      "name": "string.interpolated.jetpack",
+      "begin": "\\$\"",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.jetpack" }
+      },
+      "end": "\"",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.jetpack" }
+      },
+      "patterns": [
+        {
+          "name": "constant.character.escape.brace.jetpack",
+          "match": "\\{\\{|\\}\\}"
+        },
+        {
+          "name": "meta.interpolation.jetpack",
+          "begin": "\\{",
+          "beginCaptures": {
+            "0": { "name": "punctuation.section.interpolation.begin.jetpack" }
+          },
+          "end": "\\}",
+          "endCaptures": {
+            "0": { "name": "punctuation.section.interpolation.end.jetpack" }
+          },
+          "patterns": [
+            { "include": "#keywords" },
+            { "include": "#types" },
+            { "include": "#constants" },
+            { "include": "#strings" },
+            { "include": "#numbers" },
+            { "include": "#operators" },
+            { "include": "#identifiers" }
+          ]
+        },
+        { "include": "#string-escape" }
+      ]
+    },
+    "string-escape": {
+      "name": "constant.character.escape.jetpack",
+      "match": "\\\\[ntr\\\\'\"]"
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.jetpack",
+          "match": "\\b[0-9]+\\.[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.jetpack",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.jetpack",
+          "match": "(\\*\\*=|\\+=|-=|\\*=|/=|%=|=)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.jetpack",
+          "match": "(\\*\\*|\\+\\+|--|\\+|-|\\*|/|%)"
+        },
+        {
+          "name": "keyword.operator.comparison.jetpack",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.logical.jetpack",
+          "match": "(&&|\\|\\||!)"
+        },
+        {
+          "name": "keyword.operator.ternary.jetpack",
+          "match": "(\\?|:)"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "match": "([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+          "name": "entity.name.function.call.jetpack"
+        },
+        {
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b",
+          "name": "variable.other.jetpack"
+        }
+      ]
+    }
+  }
+}

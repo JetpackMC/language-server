@@ -1,0 +1,92 @@
+{
+  "name": "jetpack-language-support",
+  "displayName": "Jetpack Language Support",
+  "description": "Syntax highlighting and static diagnostics for the Jetpack (.jet) scripting language.",
+  "version": "0.1.0",
+  "publisher": "jetpack",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JetpackMC/language-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JetpackMC/language-server/issues"
+  },
+  "homepage": "https://github.com/JetpackMC/language-server#readme",
+  "engines": {
+    "vscode": "^1.84.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "icon": "assets/icon.png",
+  "main": "./client/out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "languages": [
+      {
+        "id": "jetpack",
+        "aliases": [
+          "Jetpack",
+          "jet"
+        ],
+        "extensions": [
+          ".jet"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "jetpack",
+        "scopeName": "source.jetpack",
+        "path": "./syntaxes/jetpack.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Jetpack",
+      "properties": {
+        "jetpack.diagnostics.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable static diagnostics (lexer, parser, name resolution, and type checking) for .jet files."
+        },
+        "jetpack.scriptsRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute or workspace-relative path to the scripts root used to resolve 'using' module paths. When empty, the directory containing the nearest 'manifest' or the workspace folder is used."
+        },
+        "jetpack.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace the communication between VS Code and the Jetpack language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -b",
+    "package:vsix": "vsce package",
+    "watch": "tsc -b -w",
+    "clean": "tsc -b --clean"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12",
+    "vscode-uri": "^3.1.0"
+  }
+}
