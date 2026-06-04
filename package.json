@@ -2,7 +2,7 @@
   "name": "jetpack-language-support",
   "displayName": "Jetpack Language Support",
   "description": "Syntax highlighting and static diagnostics for the Jetpack (.jet) scripting language.",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "publisher": "jetpack",
   "license": "MIT",
   "repository": {
