@@ -19,7 +19,10 @@ export function activate(context: ExtensionContext): void {
   };
 
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "jetpack" }],
+    documentSelector: [
+      { scheme: "file", language: "jetpack" },
+      { scheme: "untitled", language: "jetpack" },
+    ],
     synchronize: {
       configurationSection: "jetpack",
       fileEvents: workspace.createFileSystemWatcher("**/*.jet"),
