@@ -38,6 +38,10 @@
       },
       "end": "$|(?=//)|(?=/\\*)",
       "patterns": [
+        {
+          "name": "variable.parameter.annotation.jetpack",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b(?=\\s*[\"'])"
+        },
         { "include": "#strings" },
         { "include": "#numbers" }
       ]

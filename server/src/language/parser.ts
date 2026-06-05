@@ -141,6 +141,7 @@ export class Parser {
     let permissionMessage: string | null = null;
     let usage: string | null = null;
     let aliases: string[] = [];
+    const placeholders = new Map<string, { value: string; line: number; span: Span }>();
     for (const m of meta) {
       switch (m.key) {
         case "description": description = m.value; break;
@@ -148,9 +149,26 @@ export class Parser {
         case "permission_message": permissionMessage = m.value; break;
         case "usage": usage = m.value; break;
         case "aliases": aliases = this.parseAliasList(m.value); break;
+        case "placeholder":
+          if (m.target === null) {
+            throw new ParseError(
+              "Metadata '@placeholder' expects a parameter name and a string literal value",
+              m.line,
+              m.span,
+            );
+          }
+          if (placeholders.has(m.target)) {
+            throw new ParseError(
+              `Placeholder for command parameter '${m.target}' is already declared`,
+              m.line,
+              m.span,
+            );
+          }
+          placeholders.set(m.target, { value: m.value, line: m.line, span: m.span });
+          break;
       }
     }
-    return { description, permission, permissionMessage, usage, aliases };
+    return { description, permission, permissionMessage, usage, aliases, placeholders };
   }
 
   private buildListenerAnnotations(meta: Metadata[]): ListenerAnnotations {
@@ -185,19 +203,27 @@ export class Parser {
     const startTok = this.peek();
     this.expect(TokenType.AT, "Expected '@'");
     const key = this.expect(TokenType.IDENTIFIER, "Expected metadata key after '@'").value;
+    const target = key === "placeholder"
+      ? this.expect(TokenType.IDENTIFIER, "Metadata '@placeholder' expects a parameter name").value
+      : null;
     const value = this.expect(
       TokenType.STRING_LITERAL,
-      `Metadata '@${key}' expects a string literal value`,
+      key === "placeholder"
+        ? "Metadata '@placeholder' expects a string literal placeholder"
+        : `Metadata '@${key}' expects a string literal value`,
     ).value;
     if (!this.isAtEnd() && !this.check(TokenType.NEWLINE) && !this.check(TokenType.SEMICOLON)) {
       const t = this.peek();
+      const expected = key === "placeholder"
+        ? "a parameter name and one string literal value"
+        : "exactly one string literal value";
       throw new ParseError(
-        `Metadata '@${key}' must contain exactly one string literal value`,
+        `Metadata '@${key}' must contain ${expected}`,
         t.line,
         { start: t.start, end: t.end },
       );
     }
-    return { kind: "Metadata", key, value, line: startTok.line, span: this.spanFrom(startTok) };
+    return { kind: "Metadata", key, value, target, line: startTok.line, span: this.spanFrom(startTok) };
   }
 
   private parseUsing(): Statement {
@@ -498,13 +524,16 @@ export class Parser {
     };
   }
 
-  private parseCommandDecl(access: AccessModifier, startTok: Token, isRoot: boolean): CommandDecl {
-    let annotations: CommandAnnotations;
-    if (isRoot) {
-      annotations = this.pendingCommandAnnotations;
+  private parseCommandDecl(
+    access: AccessModifier,
+    startTok: Token,
+    isRoot: boolean,
+    providedAnnotations: CommandAnnotations | null = null,
+  ): CommandDecl {
+    const annotations = providedAnnotations
+      ?? (isRoot ? this.pendingCommandAnnotations : EMPTY_COMMAND_ANNOTATIONS);
+    if (isRoot && providedAnnotations === null) {
       this.pendingCommandAnnotations = EMPTY_COMMAND_ANNOTATIONS;
-    } else {
-      annotations = EMPTY_COMMAND_ANNOTATIONS;
     }
     this.expect(TokenType.KW_COMMAND, "Expected 'command'");
     const nameTok = this.expect(TokenType.IDENTIFIER, "Expected command name");
@@ -547,7 +576,35 @@ export class Parser {
 
       this.skipNewlines();
       while (!this.check(TokenType.RBRACE) && !this.isAtEnd()) {
-        if (this.check(TokenType.KW_COMMAND)) {
+        if (this.check(TokenType.AT)) {
+          const pendingMeta: Metadata[] = [];
+          while (this.check(TokenType.AT)) {
+            pendingMeta.push(this.parseMetadata());
+            this.skipNewlines();
+          }
+          if (!this.check(TokenType.KW_COMMAND)) {
+            for (const metadata of pendingMeta) {
+              items.push({ kind: "code", stmt: metadata });
+            }
+          } else {
+            const subStart = this.peek();
+            const sub = this.parseCommandDecl(
+              "private",
+              subStart,
+              false,
+              this.buildCommandAnnotations(pendingMeta),
+            );
+            if (subCommandLines.has(sub.name)) {
+              throw new ParseError(
+                `Sub command '${sub.name}' is already declared in this command body`,
+                sub.line,
+                sub.span,
+              );
+            }
+            subCommandLines.set(sub.name, sub.line);
+            items.push({ kind: "subcommand", decl: sub });
+          }
+        } else if (this.check(TokenType.KW_COMMAND)) {
           const subStart = this.peek();
           const sub = this.parseCommandDecl("private", subStart, false);
           if (subCommandLines.has(sub.name)) {
@@ -586,6 +643,7 @@ export class Parser {
         ? [{ kind: "default", body: bodyItems.map((it) => (it as { kind: "code"; stmt: Statement }).stmt) }]
         : bodyItems;
 
+    this.validateCommandPlaceholders(params, annotations);
     return {
       kind: "CommandDecl",
       access,
@@ -599,6 +657,26 @@ export class Parser {
       line: startTok.line,
       span: this.spanFrom(startTok),
     };
+  }
+
+  private validateCommandPlaceholders(params: Param[], annotations: CommandAnnotations): void {
+    const paramNames = new Set(params.map((param) => param.name));
+    for (const [name, placeholder] of annotations.placeholders) {
+      if (!paramNames.has(name)) {
+        throw new ParseError(
+          `Placeholder references unknown command parameter '${name}'`,
+          placeholder.line,
+          placeholder.span,
+        );
+      }
+      if (placeholder.value.trim().length === 0) {
+        throw new ParseError(
+          `Placeholder for command parameter '${name}' cannot be blank`,
+          placeholder.line,
+          placeholder.span,
+        );
+      }
+    }
   }
 
   private parseIntervalDecl(access: AccessModifier, startTok: Token): Statement {

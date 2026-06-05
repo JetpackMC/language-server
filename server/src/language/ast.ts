@@ -53,6 +53,7 @@ export interface CommandAnnotations {
   permissionMessage: string | null;
   usage: string | null;
   aliases: string[];
+  placeholders: Map<string, CommandPlaceholder>;
 }
 
 export const EMPTY_COMMAND_ANNOTATIONS: CommandAnnotations = {
@@ -61,7 +62,14 @@ export const EMPTY_COMMAND_ANNOTATIONS: CommandAnnotations = {
   permissionMessage: null,
   usage: null,
   aliases: [],
+  placeholders: new Map(),
 };
+
+export interface CommandPlaceholder {
+  value: string;
+  line: number;
+  span: Span;
+}
 
 export type ManifestValue =
   | { kind: "scalar"; value: string }
@@ -234,6 +242,7 @@ export interface Metadata {
   kind: "Metadata";
   key: string;
   value: string;
+  target: string | null;
   line: number;
   span: Span;
 }

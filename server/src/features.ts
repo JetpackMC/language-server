@@ -34,6 +34,7 @@ const ANNOTATIONS = [
   "permissionMessage",
   "usage",
   "aliases",
+  "placeholder",
 ];
 
 export function completion(document: TextDocument, offset: number, index: SymbolIndex | null = null): CompletionItem[] {
