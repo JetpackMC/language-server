@@ -57,7 +57,7 @@ export class Workspace {
 
   pathSegmentsOf(uri: string): string[] {
     const fsPath = URI.parse(uri).fsPath;
-    const root = this.scriptsRootFsPath();
+    const root = this.scriptsRootFsPath(fsPath);
     const relative = root !== null ? path.relative(root, fsPath) : path.basename(fsPath);
     return relative
       .split(path.sep)
@@ -67,7 +67,7 @@ export class Workspace {
       .filter((segment) => segment.length > 0);
   }
 
-  private scriptsRootFsPath(): string | null {
+  private scriptsRootFsPath(fsPath: string): string | null {
     if (this.configuredScriptsRoot.length > 0) {
       if (path.isAbsolute(this.configuredScriptsRoot)) return this.configuredScriptsRoot;
       if (this.workspaceFolderFsPath !== null) {
@@ -75,7 +75,33 @@ export class Workspace {
       }
       return this.configuredScriptsRoot;
     }
-    return this.workspaceFolderFsPath;
+    return this.detectScriptRoot(fsPath) ?? this.workspaceFolderFsPath;
+  }
+
+  private detectScriptRoot(fsPath: string): string | null {
+    const scriptDirs = this.directoriesContainingScripts();
+    let dir = path.dirname(fsPath);
+    if (!scriptDirs.has(normalizePath(dir))) return null;
+
+    const workspaceRoot = this.workspaceFolderFsPath !== null ? path.resolve(this.workspaceFolderFsPath) : null;
+    let root = dir;
+    while (true) {
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      if (workspaceRoot !== null && !isSameOrNestedPath(parent, workspaceRoot)) break;
+      if (!scriptDirs.has(normalizePath(parent))) break;
+      root = parent;
+      dir = parent;
+    }
+    return root;
+  }
+
+  private directoriesContainingScripts(): Set<string> {
+    const dirs = new Set<string>();
+    for (const uri of this.documentsByUri().keys()) {
+      dirs.add(normalizePath(path.dirname(URI.parse(uri).fsPath)));
+    }
+    return dirs;
   }
 
   private documentsByUri(): Map<string, string> {
@@ -83,6 +109,16 @@ export class Workspace {
     for (const [uri, text] of this.openContents) merged.set(uri, text);
     return merged;
   }
+}
+
+function isSameOrNestedPath(candidate: string, root: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function normalizePath(fsPath: string): string {
+  const resolved = path.resolve(fsPath);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
 function walkJetFiles(root: string): string[] {

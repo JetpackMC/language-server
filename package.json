@@ -64,7 +64,7 @@
         "jetpack.scriptsRoot": {
           "type": "string",
           "default": "",
-          "description": "Absolute or workspace-relative path to the scripts root used to resolve 'using' module paths. This mirrors the runtime's 'plugins/Jetpack/scripts' folder: module paths are computed relative to it. When empty, the workspace folder is used."
+          "description": "Absolute or workspace-relative path to the scripts root used to resolve 'using' module paths. This mirrors the runtime's 'plugins/Jetpack/scripts' folder: module paths are computed relative to it. When empty, the scripts root is auto-detected per file as the topmost ancestor directory of a contiguous run of directories that directly contain .jet files."
         },
         "jetpack.trace.server": {
           "type": "string",
