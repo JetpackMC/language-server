@@ -57,7 +57,7 @@ export class Workspace {
 
   pathSegmentsOf(uri: string): string[] {
     const fsPath = URI.parse(uri).fsPath;
-    const root = this.scriptsRootFsPath(fsPath);
+    const root = this.scriptsRootFsPath();
     const relative = root !== null ? path.relative(root, fsPath) : path.basename(fsPath);
     return relative
       .split(path.sep)
@@ -67,7 +67,7 @@ export class Workspace {
       .filter((segment) => segment.length > 0);
   }
 
-  private scriptsRootFsPath(fsPath: string): string | null {
+  private scriptsRootFsPath(): string | null {
     if (this.configuredScriptsRoot.length > 0) {
       if (path.isAbsolute(this.configuredScriptsRoot)) return this.configuredScriptsRoot;
       if (this.workspaceFolderFsPath !== null) {
@@ -75,31 +75,7 @@ export class Workspace {
       }
       return this.configuredScriptsRoot;
     }
-    return this.nearestManifestDir(fsPath) ?? this.workspaceFolderFsPath;
-  }
-
-  private nearestManifestDir(fsPath: string): string | null {
-    const workspaceRoot = this.workspaceFolderFsPath;
-    if (workspaceRoot === null) return null;
-
-    let current = path.dirname(fsPath);
-    const root = path.resolve(workspaceRoot);
-    while (isSameOrNestedPath(current, root)) {
-      if (this.directoryHasManifest(current)) return current;
-      const parent = path.dirname(current);
-      if (parent === current) break;
-      current = parent;
-    }
-    return null;
-  }
-
-  private directoryHasManifest(dir: string): boolean {
-    const targetDir = normalizePath(dir);
-    for (const [uri, text] of this.documentsByUri()) {
-      const fileDir = normalizePath(path.dirname(URI.parse(uri).fsPath));
-      if (fileDir === targetDir && containsManifestDeclaration(text)) return true;
-    }
-    return false;
+    return this.workspaceFolderFsPath;
   }
 
   private documentsByUri(): Map<string, string> {
@@ -133,77 +109,3 @@ function walkJetFiles(root: string): string[] {
   return results;
 }
 
-function isSameOrNestedPath(candidate: string, root: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
-function normalizePath(fsPath: string): string {
-  const resolved = path.resolve(fsPath);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-}
-
-function containsManifestDeclaration(source: string): boolean {
-  let pos = 0;
-  while (pos < source.length) {
-    const ch = source[pos];
-    if (ch === '"' || ch === "'") {
-      pos = skipString(source, pos, ch);
-    } else if (ch === "/" && source[pos + 1] === "/") {
-      pos = skipLineComment(source, pos + 2);
-    } else if (ch === "/" && source[pos + 1] === "*") {
-      pos = skipBlockComment(source, pos + 2);
-    } else if (isIdentifierStart(ch)) {
-      const start = pos;
-      pos++;
-      while (pos < source.length && isIdentifierPart(source[pos])) pos++;
-      if (source.slice(start, pos) === "manifest" && nextNonWhitespace(source, pos) === "{") return true;
-    } else {
-      pos++;
-    }
-  }
-  return false;
-}
-
-function skipString(source: string, start: number, quote: string): number {
-  let pos = start + 1;
-  while (pos < source.length) {
-    if (source[pos] === "\\") {
-      pos += 2;
-    } else if (source[pos] === quote) {
-      return pos + 1;
-    } else {
-      pos++;
-    }
-  }
-  return pos;
-}
-
-function skipLineComment(source: string, start: number): number {
-  let pos = start;
-  while (pos < source.length && source[pos] !== "\n") pos++;
-  return pos;
-}
-
-function skipBlockComment(source: string, start: number): number {
-  let pos = start;
-  while (pos < source.length) {
-    if (source[pos] === "*" && source[pos + 1] === "/") return pos + 2;
-    pos++;
-  }
-  return pos;
-}
-
-function nextNonWhitespace(source: string, start: number): string | null {
-  let pos = start;
-  while (pos < source.length && /\s/.test(source[pos])) pos++;
-  return pos < source.length ? source[pos] : null;
-}
-
-function isIdentifierStart(ch: string): boolean {
-  return ch === "_" || /\p{L}/u.test(ch);
-}
-
-function isIdentifierPart(ch: string): boolean {
-  return isIdentifierStart(ch) || (ch >= "0" && ch <= "9");
-}
