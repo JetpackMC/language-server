@@ -40,6 +40,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
     capabilities: {
       textDocumentSync: TextDocumentSyncKind.Incremental,
       completionProvider: { triggerCharacters: ["."] },
+      signatureHelpProvider: { triggerCharacters: ["(", ","] },
       documentSymbolProvider: true,
       hoverProvider: true,
       definitionProvider: true,
@@ -112,6 +113,10 @@ connection.onDocumentSymbol((params) => {
 
 connection.onHover((params) =>
   ensureSymbolIndex().hover(params.textDocument.uri, params.position),
+);
+
+connection.onSignatureHelp((params) =>
+  ensureSymbolIndex().signatureHelp(params.textDocument.uri, params.position),
 );
 
 connection.onDefinition((params) =>

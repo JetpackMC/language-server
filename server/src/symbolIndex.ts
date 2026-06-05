@@ -4,11 +4,14 @@ import {
   Hover,
   Location,
   MarkupKind,
+  ParameterInformation,
   Position,
   Range,
   RenameParams,
   SemanticTokens,
   SemanticTokensBuilder,
+  SignatureHelp,
+  SignatureInformation,
   TextEdit,
   WorkspaceEdit,
 } from "vscode-languageserver/node";
@@ -27,20 +30,30 @@ import {
 import { DefaultBuiltinTypeProvider } from "./language/builtins";
 import { STANDARD_MODULE_TYPES } from "./language/stdlib";
 import {
+  CallSignature,
   JetType,
+  TBool,
   TCallable,
   TCommand,
+  TFloat,
+  TInt,
   TInterval,
+  TList,
   TListener,
   TModule,
+  TNull,
+  TObject,
+  TString,
   TUnknown,
   paramsToCallSignature,
+  signatureDescribe,
   typeRefToJetType,
   typeToString,
 } from "./language/types";
 import { collectExportDefinitions, displayPath, ScriptModule } from "./language/module";
 import { SourceDocument } from "./analysis";
 import { Token, TokenType } from "./language/token";
+import { KNOWN_EVENTS } from "./language/events";
 
 export const SEMANTIC_TOKEN_TYPES = [
   "namespace",
@@ -104,6 +117,13 @@ interface ParsedDocument {
   tokens: Token[];
 }
 
+interface SemanticTokenEntry {
+  start: number;
+  end: number;
+  type: string;
+  modifiers: number;
+}
+
 export interface IndexSourceDocument extends SourceDocument {
   pathSegments: string[];
 }
@@ -111,6 +131,7 @@ export interface IndexSourceDocument extends SourceDocument {
 export class SymbolIndex {
   private readonly symbols: IndexedSymbol[] = [];
   private readonly occurrences: Occurrence[] = [];
+  private readonly expressions: { uri: string; expr: Expression; scopeId: number }[] = [];
   private readonly scopes = new Map<number, Scope>();
   private readonly docs = new Map<string, ParsedDocument>();
   private readonly modulesByPath = new Map<string, ScriptModule>();
@@ -154,16 +175,15 @@ export class SymbolIndex {
 
   hover(uri: string, position: Position): Hover | null {
     const occurrence = this.occurrenceAtPosition(uri, position);
-    if (occurrence === null) return null;
-    const symbol = occurrence.symbolId !== null ? this.symbolById(occurrence.symbolId) : null;
-    if (symbol === null) return null;
-    return {
-      contents: {
-        kind: MarkupKind.Markdown,
-        value: "```jetpack\n" + symbol.detail + "\n```",
-      },
-      range: this.toRange(uri, occurrence.range),
-    };
+    if (occurrence !== null) {
+      const symbol = occurrence.symbolId !== null ? this.symbolById(occurrence.symbolId) : null;
+      if (symbol !== null) return this.markdownHover(symbol.detail, this.toRange(uri, occurrence.range));
+      if (occurrence.role === "property") {
+        const memberHover = this.memberHover(uri, position, occurrence);
+        if (memberHover !== null) return memberHover;
+      }
+    }
+    return this.eventHover(uri, position);
   }
 
   definition(uri: string, position: Position): Location | null {
@@ -214,18 +234,157 @@ export class SymbolIndex {
     const builder = new SemanticTokensBuilder();
     if (parsed === undefined) return builder.build();
 
+    const entries: SemanticTokenEntry[] = [];
+
     for (const token of parsed.tokens) {
       const tokenType = tokenTypeFor(token);
-      if (tokenType !== null) this.pushToken(builder, parsed.document, token.start, token.end, tokenType, 0);
+      if (tokenType !== null) entries.push({ start: token.start, end: token.end, type: tokenType, modifiers: 0 });
     }
 
-    for (const occurrence of this.occurrences.filter((entry) => entry.uri === uri)) {
-      const tokenType = semanticTypeFor(occurrence.role);
-      const modifiers = occurrence.declaration ? 1 : 0;
-      this.pushToken(builder, parsed.document, occurrence.range.start, occurrence.range.end, tokenType, modifiers);
+    for (const occurrence of this.occurrences) {
+      if (occurrence.uri !== uri) continue;
+      const symbol = occurrence.symbolId !== null ? this.symbolById(occurrence.symbolId) : null;
+      entries.push({
+        start: occurrence.range.start,
+        end: occurrence.range.end,
+        type: semanticTypeFor(occurrence.role),
+        modifiers: modifierBits(occurrence.declaration, symbol),
+      });
+    }
+
+    for (const stmt of parsed.statements) {
+      if (stmt.kind === "ListenerDecl") {
+        entries.push({ start: stmt.eventTypeSpan.start, end: stmt.eventTypeSpan.end, type: "event", modifiers: 0 });
+      }
+    }
+
+    entries.sort((a, b) => a.start - b.start || a.end - b.end);
+
+    let lastEnd = -1;
+    for (const entry of entries) {
+      if (entry.start < lastEnd) continue;
+      this.pushToken(builder, parsed.document, entry.start, entry.end, entry.type, entry.modifiers);
+      lastEnd = entry.end;
     }
 
     return builder.build();
+  }
+
+  signatureHelp(uri: string, position: Position): SignatureHelp | null {
+    const parsed = this.docs.get(uri);
+    if (parsed === undefined) return null;
+    const offset = parsed.document.offsetAt(position);
+
+    const call = this.innermostCallAt(uri, offset);
+    if (call === null) return null;
+
+    const calleeType = this.exprType(call.expr.callee, call.scopeId);
+    if (calleeType.kind !== "callable" || calleeType.signatures.length === 0) return null;
+
+    const name = calleeName(call.expr.callee);
+    const activeParameter = activeParameterIndex(call.expr, offset);
+    const signatures = calleeType.signatures.map((sig) => signatureInformation(name, sig));
+    const activeSignature = selectSignature(calleeType.signatures, activeParameter);
+
+    return { signatures, activeSignature, activeParameter };
+  }
+
+  private memberHover(uri: string, position: Position, occurrence: Occurrence): Hover | null {
+    const parsed = this.docs.get(uri);
+    if (parsed === undefined) return null;
+    const offset = parsed.document.offsetAt(position);
+
+    const access = this.expressions
+      .filter((record): record is { uri: string; expr: Expression & { kind: "MemberAccess" }; scopeId: number } =>
+        record.uri === uri &&
+        record.expr.kind === "MemberAccess" &&
+        record.expr.memberSpan.start <= offset &&
+        offset < record.expr.memberSpan.end,
+      )
+      .sort((a, b) => spanLength(a.expr.memberSpan) - spanLength(b.expr.memberSpan))[0];
+    if (access === undefined) return null;
+
+    const targetType = this.exprType(access.expr.target, access.scopeId);
+    const memberType = this.memberType(targetType, access.expr.member);
+    if (memberType === null) return null;
+
+    return this.markdownHover(memberDetail(access.expr.member, memberType), this.toRange(uri, occurrence.range));
+  }
+
+  private eventHover(uri: string, position: Position): Hover | null {
+    const parsed = this.docs.get(uri);
+    if (parsed === undefined) return null;
+    const offset = parsed.document.offsetAt(position);
+
+    for (const stmt of parsed.statements) {
+      if (stmt.kind !== "ListenerDecl") continue;
+      if (stmt.eventTypeSpan.start <= offset && offset < stmt.eventTypeSpan.end) {
+        const known = KNOWN_EVENTS.has(stmt.eventType);
+        const detail = known ? `event ${stmt.eventType}` : `unknown event ${stmt.eventType}`;
+        return this.markdownHover(detail, this.toRange(uri, stmt.eventTypeSpan));
+      }
+    }
+    return null;
+  }
+
+  private markdownHover(detail: string, range: Range): Hover {
+    return {
+      contents: { kind: MarkupKind.Markdown, value: "```jetpack\n" + detail + "\n```" },
+      range,
+    };
+  }
+
+  private innermostCallAt(
+    uri: string,
+    offset: number,
+  ): { expr: Expression & { kind: "Call" }; scopeId: number } | null {
+    return this.expressions
+      .filter((record): record is { uri: string; expr: Expression & { kind: "Call" }; scopeId: number } =>
+        record.uri === uri &&
+        record.expr.kind === "Call" &&
+        offset > record.expr.callee.span.end &&
+        offset <= record.expr.span.end,
+      )
+      .sort((a, b) => spanLength(a.expr.span) - spanLength(b.expr.span))[0] ?? null;
+  }
+
+  private exprType(expr: Expression, scopeId: number): JetType {
+    switch (expr.kind) {
+      case "IntLiteral": return TInt;
+      case "FloatLiteral": return TFloat;
+      case "StringLiteral":
+      case "InterpolatedString": return TString;
+      case "BoolLiteral": return TBool;
+      case "NullLiteral": return TNull;
+      case "ListLiteral": return TList(TUnknown);
+      case "ObjectLiteral": return TObject;
+      case "Range": return TList(TInt);
+      case "Identifier": {
+        const scope = this.scopes.get(scopeId) ?? null;
+        const symbolId = scope !== null ? this.resolveSymbolId(expr.name, scope) : null;
+        if (symbolId !== null) return this.symbolById(symbolId)!.type;
+        return this.moduleTypesByRoot.get(expr.name) ?? this.builtinTypeProvider.globalType(expr.name) ?? TUnknown;
+      }
+      case "MemberAccess":
+        return this.memberType(this.exprType(expr.target, scopeId), expr.member) ?? TUnknown;
+      case "Call": {
+        const calleeType = this.exprType(expr.callee, scopeId);
+        return calleeType.kind === "callable" ? calleeType.returnType : TUnknown;
+      }
+      case "ThreadCall": return this.exprType(expr.call, scopeId);
+      case "IndexAccess": {
+        const targetType = this.exprType(expr.target, scopeId);
+        if (targetType.kind === "list") return targetType.elementType;
+        if (targetType.kind === "string") return TString;
+        return TUnknown;
+      }
+      default: return TUnknown;
+    }
+  }
+
+  private memberType(targetType: JetType, member: string): JetType | null {
+    if (targetType.kind === "module") return targetType.fields.get(member) ?? null;
+    return this.builtinTypeProvider.methodType(targetType, member);
   }
 
   private build(documents: IndexSourceDocument[]): void {
@@ -419,6 +578,7 @@ export class SymbolIndex {
   }
 
   private indexExpression(uri: string, expr: Expression, scope: Scope): void {
+    this.expressions.push({ uri, expr, scopeId: scope.id });
     switch (expr.kind) {
       case "Identifier":
         this.addReference(uri, expr.name, expr.span, scope, "variable");
@@ -676,6 +836,55 @@ function tokenTypeFor(token: Token): string | null {
   if (token.type === TokenType.INT_LITERAL || token.type === TokenType.FLOAT_LITERAL) return "number";
   if (token.type === TokenType.IDENTIFIER || token.type === TokenType.BOOL_LITERAL) return null;
   return token.type.toString().startsWith("KW_") ? "keyword" : null;
+}
+
+function memberDetail(member: string, type: JetType): string {
+  if (type.kind !== "callable") return `${member}: ${typeToString(type)}`;
+  return type.signatures
+    .map((sig) => `${member}${signatureDescribe(sig)} -> ${typeToString(sig.returnType ?? type.returnType)}`)
+    .join("\n");
+}
+
+function calleeName(callee: Expression): string {
+  if (callee.kind === "Identifier") return callee.name;
+  if (callee.kind === "MemberAccess") return callee.member;
+  return "";
+}
+
+function activeParameterIndex(call: Expression & { kind: "Call" }, offset: number): number {
+  const index = call.arguments.findIndex((arg) => offset <= arg.span.end);
+  return index === -1 ? call.arguments.length : index;
+}
+
+function selectSignature(signatures: CallSignature[], activeParameter: number): number {
+  const exact = signatures.findIndex(
+    (sig) => sig.variadicType !== null || activeParameter < sig.paramTypes.length,
+  );
+  return exact === -1 ? 0 : exact;
+}
+
+function signatureInformation(name: string, sig: CallSignature): SignatureInformation {
+  const parts = sig.paramTypes.map((type, index) =>
+    index < sig.requiredCount ? typeToString(type) : `${typeToString(type)}?`,
+  );
+  if (sig.variadicType !== null) parts.push(`${typeToString(sig.variadicType)}...`);
+
+  const label = `${name}(${parts.join(", ")})`;
+  const parameters: ParameterInformation[] = [];
+  let cursor = name.length + 1;
+  for (const part of parts) {
+    parameters.push({ label: [cursor, cursor + part.length] });
+    cursor += part.length + 2;
+  }
+  return { label, parameters };
+}
+
+function modifierBits(declaration: boolean, symbol: IndexedSymbol | null): number {
+  let bits = 0;
+  if (declaration) bits |= 1 << SEMANTIC_TOKEN_MODIFIERS.indexOf("declaration");
+  if (symbol?.readonly) bits |= 1 << SEMANTIC_TOKEN_MODIFIERS.indexOf("readonly");
+  if (symbol?.builtin) bits |= 1 << SEMANTIC_TOKEN_MODIFIERS.indexOf("defaultLibrary");
+  return bits;
 }
 
 function semanticTypeFor(role: Occurrence["role"]): string {
