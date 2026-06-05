@@ -18,17 +18,15 @@ Write Minecraft Paper server scripts with syntax highlighting, diagnostics, navi
 
 ## Installation
 
-Download the latest `.vsix` file from [GitHub Releases](https://github.com/JetpackMC/language-server/releases), then install it in VS Code:
+Install **Jetpack Language Support** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=jetpack-community.jetpack-language-support), or search for it in the Extensions view.
+
+You can also install it from the command line:
 
 ```sh
-code --install-extension jetpack-language-support-<version>.vsix
+code --install-extension jetpack-community.jetpack-language-support
 ```
 
-You can also install it through VS Code:
-
-1. Open the Extensions view.
-2. Select `...` > `Install from VSIX...`.
-3. Choose the downloaded `.vsix` file.
+Alternatively, download the latest `.vsix` file from [GitHub Releases](https://github.com/JetpackMC/language-server/releases) and install it through the Extensions view with `...` > `Install from VSIX...`.
 
 ## Configuration
 
@@ -53,6 +51,13 @@ Package a local `.vsix`:
 npm run package:vsix -- --out jetpack-language-support.vsix
 ```
 
+## Contributing
+
+Thank you for contributing to the Jetpack project.
+If you would like to contribute, please read [CONTRIBUTING.md](CONTRIBUTING.md).
+
+![Contributors](https://contrib.rocks/image?repo=JetpackMC/language-server)
+
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+The Jetpack project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
