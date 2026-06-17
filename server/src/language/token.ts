@@ -41,6 +41,7 @@ export enum TokenType {
 
   KW_INTERVAL = "KW_INTERVAL",
   KW_LISTENER = "KW_LISTENER",
+  KW_SCHEDULE = "KW_SCHEDULE",
 
   KW_COMMAND = "KW_COMMAND",
   KW_DEFAULT = "KW_DEFAULT",
@@ -48,6 +49,7 @@ export enum TokenType {
   KW_USING = "KW_USING",
   KW_AS = "KW_AS",
   KW_MANIFEST = "KW_MANIFEST",
+  KW_ENUM = "KW_ENUM",
 
   AT = "AT",
 

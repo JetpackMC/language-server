@@ -10,6 +10,7 @@ import {
   DeconstructionBinding,
   EMPTY_COMMAND_ANNOTATIONS,
   EMPTY_LISTENER_ANNOTATIONS,
+  EnumValue,
   Expression,
   InterpolationPart,
   ListenerAnnotations,
@@ -334,6 +335,8 @@ export class Parser {
       }
       case TokenType.KW_FUNCTION: return this.parseFunctionDecl(access ?? "private", startTok);
       case TokenType.KW_INTERVAL: return this.parseIntervalDecl(access ?? "private", startTok);
+      case TokenType.KW_SCHEDULE: return this.parseScheduleDecl(access ?? "private", startTok);
+      case TokenType.KW_ENUM: return this.parseEnumDecl(access ?? "private", startTok);
       case TokenType.KW_LISTENER: return this.parseListenerDecl(access ?? "private", startTok);
       case TokenType.KW_COMMAND: return this.parseCommandDecl(access ?? "private", startTok, true);
       case TokenType.KW_CONST: {
@@ -702,6 +705,126 @@ export class Parser {
       line: startTok.line,
       span: this.spanFrom(startTok),
     };
+  }
+
+  private parseScheduleDecl(access: AccessModifier, startTok: Token): Statement {
+    this.expect(TokenType.KW_SCHEDULE, "Expected 'schedule'");
+    const nameTok = this.expect(TokenType.IDENTIFIER, "Expected schedule name");
+    this.expect(TokenType.LPAREN, "Expected '(' after schedule name");
+    this.skipNewlines();
+    const cronTok = this.expect(TokenType.STRING_LITERAL, "Schedule cron must be a string literal");
+    this.skipNewlines();
+    this.expect(TokenType.RPAREN, "Expected ')' after schedule cron");
+    const body = this.parseBlock();
+    return {
+      kind: "ScheduleDecl",
+      access,
+      name: nameTok.value,
+      nameSpan: { start: nameTok.start, end: nameTok.end },
+      cron: cronTok.value,
+      body,
+      line: startTok.line,
+      span: this.spanFrom(startTok),
+    };
+  }
+
+  private parseEnumDecl(access: AccessModifier, startTok: Token): Statement {
+    this.expect(TokenType.KW_ENUM, "Expected 'enum'");
+    const nameTok = this.expect(TokenType.IDENTIFIER, "Expected enum name");
+    this.expect(TokenType.LBRACE, "Expected '{' after enum name");
+    this.skipNewlines();
+    const entries = [];
+    let nextImplicitValue: number | null = 0;
+
+    while (!this.check(TokenType.RBRACE) && !this.isAtEnd()) {
+      const entryStart = this.peek();
+      const entryName = this.expect(TokenType.IDENTIFIER, "Expected enum entry name");
+      let value: EnumValue;
+      if (this.check(TokenType.EQ)) {
+        this.advance();
+        value = this.parseEnumValue();
+        nextImplicitValue = value.kind === "int" ? value.value + 1 : null;
+      } else {
+        if (nextImplicitValue === null) {
+          throw new ParseError(
+            `Enum entry '${entryName.value}' needs an explicit value after a non-integer enum value`,
+            entryName.line,
+            { start: entryName.start, end: entryName.end },
+          );
+        }
+        value = { kind: "int", value: nextImplicitValue };
+        nextImplicitValue++;
+      }
+      entries.push({
+        name: entryName.value,
+        nameSpan: { start: entryName.start, end: entryName.end },
+        value,
+        line: entryName.line,
+        span: this.spanFrom(entryStart),
+      });
+      this.skipNewlines();
+      if (this.check(TokenType.COMMA)) {
+        this.advance();
+        this.skipNewlines();
+      } else if (!this.check(TokenType.RBRACE)) {
+        throw new ParseError("Expected ',' or '}' after enum entry", this.peek().line, {
+          start: this.peek().start,
+          end: this.peek().end,
+        });
+      }
+    }
+
+    this.expect(TokenType.RBRACE, "Expected '}' to close enum");
+    if (entries.length === 0) {
+      throw new ParseError(`Enum '${nameTok.value}' must declare at least one entry`, startTok.line, {
+        start: startTok.start,
+        end: startTok.end,
+      });
+    }
+    return {
+      kind: "EnumDecl",
+      access,
+      name: nameTok.value,
+      nameSpan: { start: nameTok.start, end: nameTok.end },
+      entries,
+      line: startTok.line,
+      span: this.spanFrom(startTok),
+    };
+  }
+
+  private parseEnumValue(): EnumValue {
+    const negative = this.check(TokenType.MINUS);
+    if (negative) this.advance();
+    const token = this.advance();
+    switch (token.type) {
+      case TokenType.INT_LITERAL: {
+        const value = this.parseIntLiteral(token);
+        if (value === null) {
+          throw new ParseError(`Integer literal '${token.value}' is out of range`, token.line, {
+            start: token.start,
+            end: token.end,
+          });
+        }
+        return { kind: "int", value: negative ? -value : value };
+      }
+      case TokenType.FLOAT_LITERAL:
+        return { kind: "float", value: negative ? -Number(token.value) : Number(token.value) };
+      case TokenType.STRING_LITERAL:
+        if (negative) {
+          throw new ParseError("Enum string value cannot be negative", token.line, { start: token.start, end: token.end });
+        }
+        return { kind: "string", value: token.value };
+      case TokenType.BOOL_LITERAL:
+        if (negative) {
+          throw new ParseError("Enum bool value cannot be negative", token.line, { start: token.start, end: token.end });
+        }
+        return { kind: "bool", value: token.value === "true" };
+      default:
+        throw new ParseError("Enum value must be a string, number, or bool literal", token.line, {
+          start: token.start,
+          end: token.end,
+        });
+    }
   }
 
   private parseListenerDecl(access: AccessModifier, startTok: Token): Statement {

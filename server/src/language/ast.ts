@@ -306,6 +306,41 @@ export interface IntervalDecl {
   span: Span;
 }
 
+export interface ScheduleDecl {
+  kind: "ScheduleDecl";
+  access: AccessModifier;
+  name: string;
+  nameSpan: Span;
+  cron: string;
+  body: Statement[];
+  line: number;
+  span: Span;
+}
+
+export type EnumValue =
+  | { kind: "int"; value: number }
+  | { kind: "float"; value: number }
+  | { kind: "string"; value: string }
+  | { kind: "bool"; value: boolean };
+
+export interface EnumEntry {
+  name: string;
+  nameSpan: Span;
+  value: EnumValue;
+  line: number;
+  span: Span;
+}
+
+export interface EnumDecl {
+  kind: "EnumDecl";
+  access: AccessModifier;
+  name: string;
+  nameSpan: Span;
+  entries: EnumEntry[];
+  line: number;
+  span: Span;
+}
+
 export interface ListenerDecl {
   kind: "ListenerDecl";
   access: AccessModifier;
@@ -402,6 +437,8 @@ export type Statement =
   | ExprStatement
   | FunctionDecl
   | IntervalDecl
+  | ScheduleDecl
+  | EnumDecl
   | ListenerDecl
   | IfStmt
   | WhileStmt
