@@ -56,12 +56,20 @@
           }
         },
         {
-          "match": "\\b(command|interval)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "match": "\\b(command|interval|schedule)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "storage.type.jetpack" },
             "2": { "name": "entity.name.function.jetpack" }
           }
         },
+        {
+          "match": "\\b(enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.enum.jetpack" },
+            "2": { "name": "entity.name.type.enum.jetpack" }
+          }
+        },
+
         {
           "match": "\\b(listener)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
@@ -84,7 +92,7 @@
         },
         {
           "name": "keyword.declaration.jetpack",
-          "match": "\\b(function|interval|listener|command|default|manifest)\\b"
+          "match": "\\b(function|interval|schedule|listener|command|default|manifest|enum)\\b"
         },
         {
           "name": "keyword.control.import.jetpack",

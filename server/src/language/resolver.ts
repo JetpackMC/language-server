@@ -94,6 +94,30 @@ export class NameResolver {
         return;
       }
 
+      case "ScheduleDecl": {
+        if (!this.isFileScope) this.error("Schedule can only be declared at file scope", stmt.line);
+        this.withDeclarationContext(true, false, false, () => {
+          this.pushScope();
+          for (const bodyStmt of stmt.body) this.resolveStmt(bodyStmt);
+          this.popScope();
+        });
+        return;
+      }
+
+      case "EnumDecl": {
+        if (!this.isFileScope) this.error("Enum can only be declared at file scope", stmt.line);
+        const seen = new Map<string, number>();
+        for (const entry of stmt.entries) {
+          const prev = seen.get(entry.name);
+          if (prev !== undefined) {
+            this.errors.push({ message: `Enum entry '${entry.name}' is already declared`, line: entry.line, prevLine: prev });
+          } else {
+            seen.set(entry.name, entry.line);
+          }
+        }
+        return;
+      }
+
       case "ListenerDecl": {
         if (!this.isFileScope) this.error("Listener can only be declared at file scope", stmt.line);
         if (!this.isKnownEvent(stmt.eventType)) {
@@ -373,8 +397,10 @@ export class NameResolver {
       switch (stmt.kind) {
         case "FunctionDecl":
         case "IntervalDecl":
+        case "ScheduleDecl":
         case "ListenerDecl":
         case "CommandDecl":
+        case "EnumDecl":
           this.declare(stmt.name, stmt.line);
           break;
         default:

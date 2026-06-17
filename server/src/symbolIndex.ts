@@ -21,6 +21,8 @@ import { Parser } from "./language/parser";
 import {
   CatchClause,
   CommandDecl,
+  EnumDecl,
+  EnumValue,
   Expression,
   Param,
   Span,
@@ -43,6 +45,7 @@ import {
   TModule,
   TNull,
   TObject,
+  TSchedule,
   TString,
   TUnknown,
   paramsToCallSignature,
@@ -457,6 +460,12 @@ export class SymbolIndex {
       case "IntervalDecl":
         this.declare(scope, uri, stmt.name, stmt.nameSpan, "event", `interval ${stmt.name}`, TInterval, true, false);
         break;
+      case "ScheduleDecl":
+        this.declare(scope, uri, stmt.name, stmt.nameSpan, "event", `schedule ${stmt.name}`, TSchedule, true, false);
+        break;
+      case "EnumDecl":
+        this.declare(scope, uri, stmt.name, stmt.nameSpan, "module", `enum ${stmt.name}`, enumType(stmt), true, false);
+        break;
       case "ListenerDecl":
         this.declare(scope, uri, stmt.name, stmt.nameSpan, "event", `listener ${stmt.eventType} ${stmt.name}`, TListener, true, false);
         break;
@@ -491,6 +500,11 @@ export class SymbolIndex {
       }
       case "IntervalDecl":
         this.indexBlock(uri, stmt.body, scope, blockSpan(stmt.body, stmt.span));
+        return;
+      case "ScheduleDecl":
+        this.indexBlock(uri, stmt.body, scope, blockSpan(stmt.body, stmt.span));
+        return;
+      case "EnumDecl":
         return;
       case "ListenerDecl": {
         const bodyScope = this.createScopeForStatements(uri, scope.id, stmt.body, stmt.span);
@@ -810,6 +824,19 @@ function parseDocument(doc: IndexSourceDocument): ParsedDocument | null {
 function functionType(params: Param[], returnType: TypeRef | null): JetType {
   const resolvedReturnType = returnType !== null ? typeRefToJetType(returnType) : TUnknown;
   return TCallable(resolvedReturnType, [{ ...paramsToCallSignature(params), returnType: resolvedReturnType }]);
+}
+
+function enumType(stmt: EnumDecl): JetType {
+  return TModule(new Map(stmt.entries.map((entry) => [entry.name, enumValueType(entry.value)])));
+}
+
+function enumValueType(value: EnumValue): JetType {
+  switch (value.kind) {
+    case "int": return TInt;
+    case "float": return TFloat;
+    case "string": return TString;
+    case "bool": return TBool;
+  }
 }
 
 function typeRefDetail(ref: TypeRef): string {

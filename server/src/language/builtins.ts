@@ -117,6 +117,20 @@ const intervalMethods: MethodProvider = (targetType, method) => {
   }
 };
 
+const scheduleMethods: MethodProvider = (targetType, method) => {
+  if (targetType.kind !== "schedule") return null;
+  switch (method) {
+    case "activate":
+    case "deactivate":
+    case "destroy":
+    case "isActive": return callable(TBool, [signature([])]);
+    case "trigger": return callable(TNull, [signature([])]);
+    case "cron": return callable(TString, [signature([])]);
+    case "nextRun": return callable(TUnknown, [signature([])]);
+    default: return null;
+  }
+};
+
 const listenerMethods: MethodProvider = (targetType, method) => {
   if (targetType.kind !== "listener") return null;
   switch (method) {
@@ -174,6 +188,7 @@ const METHOD_PROVIDERS: ReadonlyArray<MethodProvider> = [
   listMethods,
   objectMethods,
   intervalMethods,
+  scheduleMethods,
   listenerMethods,
   commandMethods,
   conversionMethods,

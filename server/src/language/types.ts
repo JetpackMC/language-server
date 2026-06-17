@@ -9,6 +9,7 @@ export type JetType =
   | { kind: "null" }
   | { kind: "function" }
   | { kind: "interval" }
+  | { kind: "schedule" }
   | { kind: "listener" }
   | { kind: "command" }
   | { kind: "unknown" }
@@ -25,6 +26,7 @@ export const TObject: JetType = Object.freeze({ kind: "object" });
 export const TNull: JetType = Object.freeze({ kind: "null" });
 export const TFunction: JetType = Object.freeze({ kind: "function" });
 export const TInterval: JetType = Object.freeze({ kind: "interval" });
+export const TSchedule: JetType = Object.freeze({ kind: "schedule" });
 export const TListener: JetType = Object.freeze({ kind: "listener" });
 export const TCommand: JetType = Object.freeze({ kind: "command" });
 export const TUnknown: JetType = Object.freeze({ kind: "unknown" });
@@ -62,6 +64,7 @@ export function typeToString(t: JetType): string {
     case "null": return "null";
     case "function": return "function";
     case "interval": return "interval";
+    case "schedule": return "schedule";
     case "listener": return "listener";
     case "command": return "command";
     case "unknown": return "unknown";

@@ -1,6 +1,8 @@
 import {
   CatchClause,
   CommandDecl,
+  EnumDecl,
+  EnumValue,
   Expression,
   Statement,
   TypeRef,
@@ -18,8 +20,10 @@ import {
   TInterval,
   TList,
   TListener,
+  TModule,
   TNull,
   TObject,
+  TSchedule,
   TString,
   TUnknown,
   accepts,
@@ -100,8 +104,10 @@ export class TypeChecker {
     for (const stmt of stmts) {
       if (stmt.kind === "FunctionDecl") this.hoistFunction(stmt);
       if (stmt.kind === "IntervalDecl") this.defineType(stmt.name, TInterval);
+      if (stmt.kind === "ScheduleDecl") this.defineType(stmt.name, TSchedule);
       if (stmt.kind === "ListenerDecl") this.defineType(stmt.name, TListener);
       if (stmt.kind === "CommandDecl") this.defineType(stmt.name, TCommand);
+      if (stmt.kind === "EnumDecl") this.defineType(stmt.name, this.enumType(stmt), true);
     }
     for (const stmt of stmts) this.checkStmt(stmt);
     this.popScope();
@@ -189,6 +195,16 @@ export class TypeChecker {
         this.popScope();
         return;
       }
+
+      case "ScheduleDecl": {
+        this.pushScope();
+        for (const bodyStmt of stmt.body) this.checkStmt(bodyStmt);
+        this.popScope();
+        return;
+      }
+
+      case "EnumDecl":
+        return;
 
       case "ListenerDecl": {
         this.pushScope();
@@ -1133,6 +1149,19 @@ export class TypeChecker {
   private hoistFunction(stmt: Statement & { kind: "FunctionDecl" }): void {
     const retType = stmt.returnType ? typeRefToJetType(stmt.returnType) : TUnknown;
     this.currentTypeScope().set(stmt.name, TCallable(retType, [paramsToCallSignature(stmt.params)]));
+  }
+
+  private enumType(stmt: EnumDecl): JetType {
+    return TModule(new Map(stmt.entries.map((entry) => [entry.name, this.enumValueType(entry.value)])));
+  }
+
+  private enumValueType(value: EnumValue): JetType {
+    switch (value.kind) {
+      case "int": return TInt;
+      case "float": return TFloat;
+      case "string": return TString;
+      case "bool": return TBool;
+    }
   }
 
   private resolveTypeRef(typeRef: TypeRef, line: number, context: string): JetType {

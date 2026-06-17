@@ -1,10 +1,16 @@
-import { AccessModifier, Statement, Using } from "./ast";
+import { AccessModifier, EnumDecl, EnumValue, Statement, Using } from "./ast";
 import {
   JetType,
   TCallable,
   TCommand,
   TInterval,
   TListener,
+  TModule,
+  TBool,
+  TFloat,
+  TInt,
+  TString,
+  TSchedule,
   TUnknown,
   paramsToCallSignature,
   typeRefToJetType,
@@ -80,6 +86,24 @@ export function collectExportDefinitions(stmts: Statement[]): Map<string, Module
           availableAfterDeclaration: true,
         });
         break;
+      case "ScheduleDecl":
+        exports.set(stmt.name, {
+          name: stmt.name,
+          access: stmt.access,
+          type: TSchedule,
+          isReadOnly: true,
+          availableAfterDeclaration: true,
+        });
+        break;
+      case "EnumDecl":
+        exports.set(stmt.name, {
+          name: stmt.name,
+          access: stmt.access,
+          type: enumType(stmt),
+          isReadOnly: true,
+          availableAfterDeclaration: true,
+        });
+        break;
       case "ListenerDecl":
         exports.set(stmt.name, {
           name: stmt.name,
@@ -117,4 +141,17 @@ export function collectExportDefinitions(stmts: Statement[]): Map<string, Module
     }
   }
   return exports;
+}
+
+function enumType(stmt: EnumDecl): JetType {
+  return TModule(new Map(stmt.entries.map((entry) => [entry.name, enumValueType(entry.value)])));
+}
+
+function enumValueType(value: EnumValue): JetType {
+  switch (value.kind) {
+    case "int": return TInt;
+    case "float": return TFloat;
+    case "string": return TString;
+    case "bool": return TBool;
+  }
 }

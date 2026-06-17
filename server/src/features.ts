@@ -18,7 +18,7 @@ const KEYWORDS = [
   "function", "return", "const", "public", "private", "protected",
   "if", "else", "while", "foreach", "in", "break", "continue",
   "try", "catch", "finally", "thread", "to", "until",
-  "interval", "listener", "command", "default", "using", "as", "manifest",
+  "interval", "schedule", "listener", "command", "default", "using", "as", "manifest", "enum",
 ];
 
 const BUILTIN_GLOBALS = [...new DefaultBuiltinTypeProvider().globalNames()];
@@ -82,6 +82,10 @@ function toSymbol(document: TextDocument, stmt: Statement): DocumentSymbol | nul
       return symbol(document, stmt.name, SymbolKind.Function, stmt.span, stmt.nameSpan);
     case "IntervalDecl":
       return symbol(document, stmt.name, SymbolKind.Event, stmt.span, stmt.nameSpan);
+    case "ScheduleDecl":
+      return symbol(document, stmt.name, SymbolKind.Event, stmt.span, stmt.nameSpan);
+    case "EnumDecl":
+      return symbol(document, stmt.name, SymbolKind.Enum, stmt.span, stmt.nameSpan);
     case "ListenerDecl":
       return symbol(document, `${stmt.name} (${stmt.eventType})`, SymbolKind.Event, stmt.span, stmt.nameSpan);
     case "CommandDecl":
