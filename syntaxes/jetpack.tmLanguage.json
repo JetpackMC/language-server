@@ -139,11 +139,11 @@
     },
     "interpolated-string": {
       "name": "string.interpolated.jetpack",
-      "begin": "\\$\"",
+      "begin": "\\$([\"'])",
       "beginCaptures": {
         "0": { "name": "punctuation.definition.string.begin.jetpack" }
       },
-      "end": "\"",
+      "end": "\\1",
       "endCaptures": {
         "0": { "name": "punctuation.definition.string.end.jetpack" }
       },
