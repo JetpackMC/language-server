@@ -67,7 +67,7 @@ export function completion(document: TextDocument, offset: number, index: Symbol
 export function documentSymbols(document: TextDocument): DocumentSymbol[] {
   let stmts: Statement[];
   try {
-    stmts = new Parser(new Lexer(document.getText()).tokenize()).parseFile();
+    stmts = new Parser(new Lexer(document.getText()).tokenize()).parseFileTolerant().stmts;
   } catch {
     return [];
   }

@@ -848,7 +848,7 @@ function parseDocument(doc: IndexSourceDocument): ParsedDocument | null {
   try {
     const document = TextDocument.create(doc.uri, "jetpack", 0, doc.text);
     const tokens = new Lexer(doc.text).tokenize();
-    const statements = new Parser(tokens).parseFile();
+    const statements = new Parser(tokens).parseFileTolerant().stmts;
     return { uri: doc.uri, text: doc.text, document, statements, tokens };
   } catch {
     return null;
