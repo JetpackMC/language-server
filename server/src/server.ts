@@ -15,7 +15,7 @@ import { TextDocument } from "vscode-languageserver-textdocument";
 import { URI } from "vscode-uri";
 import { JetpackAnalyzer, RawDiagnostic } from "./analysis";
 import { Workspace } from "./workspace";
-import { completion, documentSymbols } from "./features";
+import { completion, documentSymbols, resolveCompletionItem } from "./features";
 import {
   SEMANTIC_TOKEN_MODIFIERS,
   SEMANTIC_TOKEN_TYPES,
@@ -40,7 +40,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   return {
     capabilities: {
       textDocumentSync: TextDocumentSyncKind.Incremental,
-      completionProvider: { triggerCharacters: ["."] },
+      completionProvider: { triggerCharacters: ["."], resolveProvider: true },
       signatureHelpProvider: { triggerCharacters: ["(", ","] },
       documentSymbolProvider: true,
       hoverProvider: true,
@@ -108,6 +108,8 @@ connection.onCompletion((params) => {
   if (document === undefined) return [];
   return completion(document, document.offsetAt(params.position), ensureSymbolIndex());
 });
+
+connection.onCompletionResolve((item) => resolveCompletionItem(item));
 
 connection.onDocumentSymbol((params) => {
   const document = documents.get(params.textDocument.uri);

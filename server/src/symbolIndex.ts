@@ -168,17 +168,18 @@ export class SymbolIndex {
 
     const items = new Map<string, CompletionItem>();
     for (const symbol of this.visibleSymbols(uri, offset)) {
-      items.set(symbol.name, {
+      items.set(symbol.name, withDoc({
         label: symbol.name,
         kind: completionKind(symbol.role),
         detail: symbol.detail,
-      });
+      }));
     }
     for (const [name, type] of this.moduleTypesByRoot) {
-      items.set(name, { label: name, kind: CompletionItemKind.Module, detail: typeToString(type) });
+      items.set(name, withDoc({ label: name, kind: CompletionItemKind.Module, detail: typeToString(type) }));
     }
     for (const name of this.builtinTypeProvider.globalNames()) {
-      items.set(name, { label: name, kind: CompletionItemKind.Function, detail: "builtin" });
+      const type = this.builtinTypeProvider.globalType(name);
+      items.set(name, withDoc({ label: name, kind: CompletionItemKind.Function, detail: type !== null ? typeToString(type) : "builtin" }));
     }
     return [...items.values()].sort(compareCompletionItems);
   }
@@ -462,7 +463,7 @@ export class SymbolIndex {
   private hoistDeclaration(uri: string, scope: Scope, stmt: Statement): void {
     switch (stmt.kind) {
       case "FunctionDecl":
-        this.declare(scope, uri, stmt.name, stmt.nameSpan, "function", `function ${stmt.name}`, functionType(stmt.params, stmt.returnType), true, false);
+        this.declare(scope, uri, stmt.name, stmt.nameSpan, "function", `function ${stmt.name}${paramListDetail(stmt.params)}${stmt.returnType !== null ? `: ${typeRefDetail(stmt.returnType)}` : ""}`, functionType(stmt.params, stmt.returnType), true, false);
         break;
       case "IntervalDecl":
         this.declare(scope, uri, stmt.name, stmt.nameSpan, "event", `interval ${stmt.name}`, TInterval, true, false);
@@ -477,7 +478,7 @@ export class SymbolIndex {
         this.declare(scope, uri, stmt.name, stmt.nameSpan, "event", `listener ${stmt.eventType} ${stmt.name}`, TListener, true, false);
         break;
       case "CommandDecl":
-        this.declare(scope, uri, stmt.name, stmt.nameSpan, "method", `command ${stmt.name}`, TCommand, true, false);
+        this.declare(scope, uri, stmt.name, stmt.nameSpan, "method", `command ${stmt.name}${paramListDetail(stmt.params)}`, TCommand, true, false);
         break;
       default:
         break;
@@ -755,21 +756,21 @@ export class SymbolIndex {
     const items = new Map<string, CompletionItem>();
     if (type.kind === "module") {
       for (const [label, fieldType] of type.fields) {
-        items.set(label, {
+        items.set(label, withDoc({
           label,
           kind: fieldType.kind === "callable" ? CompletionItemKind.Function : CompletionItemKind.Property,
           detail: typeToString(fieldType),
-        });
+        }));
       }
     }
     for (const label of this.builtinTypeProvider.methodNames(type)) {
       const methodType = this.builtinTypeProvider.methodType(type, label);
       if (methodType === null) continue;
-      items.set(label, {
+      items.set(label, withDoc({
         label,
         kind: CompletionItemKind.Method,
-        detail: typeToString(methodType),
-      });
+        detail: memberDetail(label, methodType),
+      }));
     }
     return [...items.values()].sort(compareCompletionItems);
   }
@@ -1000,6 +1001,33 @@ function usingPrefixBefore(text: string, offset: number): string | null {
 
 function compareCompletionItems(a: CompletionItem, b: CompletionItem): number {
   return a.label.localeCompare(b.label);
+}
+
+interface CompletionData {
+  detail: string;
+}
+
+export function withDoc(item: CompletionItem): CompletionItem {
+  if (item.detail === undefined) return item;
+  return { ...item, data: { detail: item.detail } satisfies CompletionData };
+}
+
+export function resolveCompletionItem(item: CompletionItem): CompletionItem {
+  const data = item.data as CompletionData | undefined;
+  if (data?.detail === undefined || item.documentation !== undefined) return item;
+  return {
+    ...item,
+    documentation: { kind: MarkupKind.Markdown, value: "```jetpack\n" + data.detail + "\n```" },
+  };
+}
+
+function paramListDetail(params: Param[]): string {
+  const parts = params.map((param) => {
+    const type = param.typeName !== null ? typeRefDetail(param.typeName) : "var";
+    const suffix = param.default !== null ? " = …" : "";
+    return `${type} ${param.name}${suffix}`;
+  });
+  return `(${parts.join(", ")})`;
 }
 
 function spanLength(span: Span): number {
