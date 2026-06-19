@@ -389,6 +389,14 @@ export class SymbolIndex {
         if (targetType.kind === "string") return TString;
         return TUnknown;
       }
+      case "BinaryOp":
+        return binaryOpType(expr.operator.type, this.exprType(expr.left, scopeId), this.exprType(expr.right, scopeId));
+      case "UnaryOp":
+        return expr.operator.type === TokenType.BANG ? TBool : this.exprType(expr.operand, scopeId);
+      case "Ternary": {
+        const thenType = this.exprType(expr.thenExpr, scopeId);
+        return thenType.kind !== "unknown" ? thenType : this.exprType(expr.elseExpr, scopeId);
+      }
       default: return TUnknown;
     }
   }
@@ -1057,4 +1065,18 @@ function isIdentifierStart(ch: string): boolean {
 
 function isIdentifierPart(ch: string): boolean {
   return isIdentifierStart(ch) || (ch >= "0" && ch <= "9");
+}
+
+const BOOL_RESULT_OPS: ReadonlySet<TokenType> = new Set([
+  TokenType.EQ_EQ, TokenType.BANG_EQ, TokenType.LT, TokenType.LT_EQ, TokenType.GT, TokenType.GT_EQ,
+  TokenType.AMP_AMP, TokenType.PIPE_PIPE,
+]);
+
+function binaryOpType(operator: TokenType, left: JetType, right: JetType): JetType {
+  if (BOOL_RESULT_OPS.has(operator)) return TBool;
+  if (operator === TokenType.STAR_STAR) return TFloat;
+  if (operator === TokenType.PLUS && (left.kind === "string" || right.kind === "string")) return TString;
+  if (left.kind === "float" || right.kind === "float") return TFloat;
+  if (left.kind === "int" && right.kind === "int") return TInt;
+  return TUnknown;
 }
