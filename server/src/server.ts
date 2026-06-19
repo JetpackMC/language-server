@@ -7,6 +7,7 @@ import {
   InitializeResult,
   DidChangeWatchedFilesNotification,
   FileChangeType,
+  CodeActionKind,
   Diagnostic,
   DiagnosticSeverity,
   Range,
@@ -49,9 +50,18 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       definitionProvider: true,
       referencesProvider: true,
       renameProvider: { prepareProvider: true },
+      documentHighlightProvider: true,
+      workspaceSymbolProvider: true,
+      foldingRangeProvider: true,
+      selectionRangeProvider: true,
+      codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix] },
       documentFormattingProvider: true,
       documentRangeFormattingProvider: true,
       documentOnTypeFormattingProvider: { firstTriggerCharacter: "}", moreTriggerCharacter: ["\n"] },
+      inlayHintProvider: true,
+      documentLinkProvider: { resolveProvider: false },
+      linkedEditingRangeProvider: true,
+      codeLensProvider: { resolveProvider: false },
       semanticTokensProvider: {
         legend: {
           tokenTypes: [...SEMANTIC_TOKEN_TYPES],
@@ -145,6 +155,38 @@ connection.onPrepareRename((params) =>
 );
 
 connection.onRenameRequest((params) => ensureSymbolIndex().rename(params));
+
+connection.onDocumentHighlight((params) =>
+  ensureSymbolIndex().documentHighlights(params.textDocument.uri, params.position),
+);
+
+connection.onWorkspaceSymbol((params) => ensureSymbolIndex().workspaceSymbols(params.query));
+
+connection.onFoldingRanges((params) =>
+  ensureSymbolIndex().foldingRanges(params.textDocument.uri),
+);
+
+connection.onSelectionRanges((params) =>
+  ensureSymbolIndex().selectionRanges(params.textDocument.uri, params.positions),
+);
+
+connection.onCodeAction((params) =>
+  ensureSymbolIndex().codeActions(params.textDocument.uri, params.range),
+);
+
+connection.onCodeLens((params) => ensureSymbolIndex().codeLenses(params.textDocument.uri));
+
+connection.onDocumentLinks((params) =>
+  ensureSymbolIndex().documentLinks(params.textDocument.uri),
+);
+
+connection.languages.inlayHint.on((params) =>
+  ensureSymbolIndex().inlayHints(params.textDocument.uri, params.range),
+);
+
+connection.languages.onLinkedEditingRange((params) =>
+  ensureSymbolIndex().linkedEditingRanges(params.textDocument.uri, params.position),
+);
 
 connection.languages.semanticTokens.on((params) =>
   fullSemanticTokens(params.textDocument.uri),
