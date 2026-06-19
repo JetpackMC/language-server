@@ -7,20 +7,24 @@ import {
   InitializeResult,
   DidChangeWatchedFilesNotification,
   FileChangeType,
+  CodeActionKind,
   Diagnostic,
   DiagnosticSeverity,
   Range,
+  SemanticTokens,
+  SemanticTokensDelta,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { URI } from "vscode-uri";
 import { JetpackAnalyzer, RawDiagnostic } from "./analysis";
 import { Workspace } from "./workspace";
-import { completion, documentSymbols } from "./features";
+import { completion, documentSymbols, resolveCompletionItem } from "./features";
 import {
   SEMANTIC_TOKEN_MODIFIERS,
   SEMANTIC_TOKEN_TYPES,
   SymbolIndex,
 } from "./symbolIndex";
+import { formatDocument, formatRange, formatOnType } from "./language/formatter";
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -39,19 +43,32 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   return {
     capabilities: {
       textDocumentSync: TextDocumentSyncKind.Incremental,
-      completionProvider: { triggerCharacters: ["."] },
+      completionProvider: { triggerCharacters: ["."], resolveProvider: true },
       signatureHelpProvider: { triggerCharacters: ["(", ","] },
       documentSymbolProvider: true,
       hoverProvider: true,
       definitionProvider: true,
       referencesProvider: true,
       renameProvider: { prepareProvider: true },
+      documentHighlightProvider: true,
+      workspaceSymbolProvider: true,
+      foldingRangeProvider: true,
+      selectionRangeProvider: true,
+      codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix] },
+      documentFormattingProvider: true,
+      documentRangeFormattingProvider: true,
+      documentOnTypeFormattingProvider: { firstTriggerCharacter: "}", moreTriggerCharacter: ["\n"] },
+      inlayHintProvider: true,
+      documentLinkProvider: { resolveProvider: false },
+      linkedEditingRangeProvider: true,
+      codeLensProvider: { resolveProvider: false },
       semanticTokensProvider: {
         legend: {
           tokenTypes: [...SEMANTIC_TOKEN_TYPES],
           tokenModifiers: [...SEMANTIC_TOKEN_MODIFIERS],
         },
-        full: true,
+        full: { delta: true },
+        range: true,
       },
     },
   };
@@ -105,6 +122,8 @@ connection.onCompletion((params) => {
   return completion(document, document.offsetAt(params.position), ensureSymbolIndex());
 });
 
+connection.onCompletionResolve((item) => resolveCompletionItem(item));
+
 connection.onDocumentSymbol((params) => {
   const document = documents.get(params.textDocument.uri);
   if (document === undefined) return [];
@@ -137,9 +156,64 @@ connection.onPrepareRename((params) =>
 
 connection.onRenameRequest((params) => ensureSymbolIndex().rename(params));
 
-connection.languages.semanticTokens.on((params) =>
-  ensureSymbolIndex().semanticTokens(params.textDocument.uri),
+connection.onDocumentHighlight((params) =>
+  ensureSymbolIndex().documentHighlights(params.textDocument.uri, params.position),
 );
+
+connection.onWorkspaceSymbol((params) => ensureSymbolIndex().workspaceSymbols(params.query));
+
+connection.onFoldingRanges((params) =>
+  ensureSymbolIndex().foldingRanges(params.textDocument.uri),
+);
+
+connection.onSelectionRanges((params) =>
+  ensureSymbolIndex().selectionRanges(params.textDocument.uri, params.positions),
+);
+
+connection.onCodeAction((params) =>
+  ensureSymbolIndex().codeActions(params.textDocument.uri, params.range),
+);
+
+connection.onCodeLens((params) => ensureSymbolIndex().codeLenses(params.textDocument.uri));
+
+connection.onDocumentLinks((params) =>
+  ensureSymbolIndex().documentLinks(params.textDocument.uri),
+);
+
+connection.languages.inlayHint.on((params) =>
+  ensureSymbolIndex().inlayHints(params.textDocument.uri, params.range),
+);
+
+connection.languages.onLinkedEditingRange((params) =>
+  ensureSymbolIndex().linkedEditingRanges(params.textDocument.uri, params.position),
+);
+
+connection.languages.semanticTokens.on((params) =>
+  fullSemanticTokens(params.textDocument.uri),
+);
+
+connection.languages.semanticTokens.onDelta((params) =>
+  deltaSemanticTokens(params.textDocument.uri, params.previousResultId),
+);
+
+connection.languages.semanticTokens.onRange((params) =>
+  ensureSymbolIndex().semanticTokens(params.textDocument.uri, params.range),
+);
+
+connection.onDocumentFormatting((params) => {
+  const document = documents.get(params.textDocument.uri);
+  return document !== undefined ? formatDocument(document) : [];
+});
+
+connection.onDocumentRangeFormatting((params) => {
+  const document = documents.get(params.textDocument.uri);
+  return document !== undefined ? formatRange(document, params.range) : [];
+});
+
+connection.onDocumentOnTypeFormatting((params) => {
+  const document = documents.get(params.textDocument.uri);
+  return document !== undefined ? formatOnType(document, params.position.line) : [];
+});
 
 function resolveWorkspaceFolder(params: InitializeParams): string | null {
   const folder = params.workspaceFolders?.[0]?.uri ?? params.rootUri ?? null;
@@ -186,6 +260,48 @@ function runAnalysis(): void {
 function ensureSymbolIndex(): SymbolIndex {
   if (symbolIndex === null) rebuildSymbolIndex(workspace.documents());
   return symbolIndex!;
+}
+
+const previousSemanticTokens = new Map<string, { resultId: string; data: number[] }>();
+let semanticResultCounter = 0;
+
+function fullSemanticTokens(uri: string): SemanticTokens {
+  const data = ensureSymbolIndex().semanticTokens(uri).data;
+  const resultId = String(++semanticResultCounter);
+  previousSemanticTokens.set(uri, { resultId, data });
+  return { resultId, data };
+}
+
+function deltaSemanticTokens(uri: string, previousResultId: string): SemanticTokens | SemanticTokensDelta {
+  const previous = previousSemanticTokens.get(uri);
+  const data = ensureSymbolIndex().semanticTokens(uri).data;
+  const resultId = String(++semanticResultCounter);
+  if (previous === undefined || previous.resultId !== previousResultId) {
+    previousSemanticTokens.set(uri, { resultId, data });
+    return { resultId, data };
+  }
+  const edits = diffSemanticTokens(previous.data, data);
+  previousSemanticTokens.set(uri, { resultId, data });
+  return { resultId, edits };
+}
+
+function diffSemanticTokens(before: number[], after: number[]): SemanticTokensDelta["edits"] {
+  let prefix = 0;
+  const max = Math.min(before.length, after.length);
+  while (prefix < max && before[prefix] === after[prefix]) prefix++;
+
+  let suffix = 0;
+  while (
+    suffix < max - prefix &&
+    before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) {
+    suffix++;
+  }
+
+  const deleteCount = before.length - prefix - suffix;
+  const data = after.slice(prefix, after.length - suffix);
+  if (deleteCount === 0 && data.length === 0) return [];
+  return [{ start: prefix, deleteCount, data }];
 }
 
 function rebuildSymbolIndex(docs: { uri: string; text: string }[]): void {

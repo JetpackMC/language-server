@@ -11,7 +11,9 @@ import { Parser } from "./language/parser";
 import { CommandDecl, Span, Statement } from "./language/ast";
 import { KNOWN_EVENTS } from "./language/events";
 import { DefaultBuiltinTypeProvider } from "./language/builtins";
-import { SymbolIndex } from "./symbolIndex";
+import { SymbolIndex, withDoc, resolveCompletionItem } from "./symbolIndex";
+
+export { resolveCompletionItem };
 
 const KEYWORDS = [
   "int", "float", "string", "bool", "list", "object", "var", "null", "true", "false",
@@ -56,10 +58,10 @@ export function completion(document: TextDocument, offset: number, index: Symbol
 
   const existingLabels = new Set(items.map((item) => item.label));
   for (const label of KEYWORDS) {
-    if (!existingLabels.has(label)) items.push({ label, kind: CompletionItemKind.Keyword });
+    if (!existingLabels.has(label)) items.push(withDoc({ label, kind: CompletionItemKind.Keyword, detail: "keyword" }));
   }
   for (const label of BUILTIN_GLOBALS) {
-    if (!existingLabels.has(label)) items.push({ label, kind: CompletionItemKind.Function });
+    if (!existingLabels.has(label)) items.push(withDoc({ label, kind: CompletionItemKind.Function, detail: "builtin global" }));
   }
   return items;
 }
@@ -67,7 +69,7 @@ export function completion(document: TextDocument, offset: number, index: Symbol
 export function documentSymbols(document: TextDocument): DocumentSymbol[] {
   let stmts: Statement[];
   try {
-    stmts = new Parser(new Lexer(document.getText()).tokenize()).parseFile();
+    stmts = new Parser(new Lexer(document.getText()).tokenize()).parseFileTolerant().stmts;
   } catch {
     return [];
   }

@@ -1,17 +1,31 @@
 import {
+  CodeAction,
+  CodeActionKind,
+  CodeLens,
+  Command,
   CompletionItem,
   CompletionItemKind,
+  DocumentHighlight,
+  DocumentHighlightKind,
+  DocumentLink,
+  FoldingRange,
+  FoldingRangeKind,
   Hover,
+  InlayHint,
+  InlayHintKind,
+  LinkedEditingRanges,
   Location,
   MarkupKind,
   ParameterInformation,
   Position,
   Range,
   RenameParams,
+  SelectionRange,
   SemanticTokens,
-  SemanticTokensBuilder,
   SignatureHelp,
   SignatureInformation,
+  SymbolInformation,
+  SymbolKind,
   TextEdit,
   WorkspaceEdit,
 } from "vscode-languageserver/node";
@@ -54,6 +68,7 @@ import {
   typeToString,
 } from "./language/types";
 import { collectExportDefinitions, displayPath, ScriptModule } from "./language/module";
+import { resolveUsingPath } from "./language/usingResolver";
 import { SourceDocument } from "./analysis";
 import { Token, TokenType } from "./language/token";
 import { KNOWN_EVENTS } from "./language/events";
@@ -168,17 +183,18 @@ export class SymbolIndex {
 
     const items = new Map<string, CompletionItem>();
     for (const symbol of this.visibleSymbols(uri, offset)) {
-      items.set(symbol.name, {
+      items.set(symbol.name, withDoc({
         label: symbol.name,
         kind: completionKind(symbol.role),
         detail: symbol.detail,
-      });
+      }));
     }
     for (const [name, type] of this.moduleTypesByRoot) {
-      items.set(name, { label: name, kind: CompletionItemKind.Module, detail: typeToString(type) });
+      items.set(name, withDoc({ label: name, kind: CompletionItemKind.Module, detail: typeToString(type) }));
     }
     for (const name of this.builtinTypeProvider.globalNames()) {
-      items.set(name, { label: name, kind: CompletionItemKind.Function, detail: "builtin" });
+      const type = this.builtinTypeProvider.globalType(name);
+      items.set(name, withDoc({ label: name, kind: CompletionItemKind.Function, detail: type !== null ? typeToString(type) : "builtin" }));
     }
     return [...items.values()].sort(compareCompletionItems);
   }
@@ -239,10 +255,13 @@ export class SymbolIndex {
     };
   }
 
-  semanticTokens(uri: string): SemanticTokens {
+  semanticTokens(uri: string, range?: Range): SemanticTokens {
     const parsed = this.docs.get(uri);
-    const builder = new SemanticTokensBuilder();
-    if (parsed === undefined) return builder.build();
+    if (parsed === undefined) return { data: [] };
+
+    const limit = range !== null && range !== undefined
+      ? { start: parsed.document.offsetAt(range.start), end: parsed.document.offsetAt(range.end) }
+      : null;
 
     const entries: SemanticTokenEntry[] = [];
 
@@ -270,14 +289,23 @@ export class SymbolIndex {
 
     entries.sort((a, b) => a.start - b.start || a.end - b.end);
 
+    const data: number[] = [];
+    let prevLine = 0;
+    let prevChar = 0;
     let lastEnd = -1;
     for (const entry of entries) {
       if (entry.start < lastEnd) continue;
-      this.pushToken(builder, parsed.document, entry.start, entry.end, entry.type, entry.modifiers);
+      if (limit !== null && (entry.end <= limit.start || entry.start >= limit.end)) continue;
+      const position = parsed.document.positionAt(entry.start);
+      const deltaLine = position.line - prevLine;
+      const deltaChar = deltaLine === 0 ? position.character - prevChar : position.character;
+      data.push(deltaLine, deltaChar, Math.max(1, entry.end - entry.start), SEMANTIC_TOKEN_TYPES.indexOf(entry.type as typeof SEMANTIC_TOKEN_TYPES[number]), entry.modifiers);
+      prevLine = position.line;
+      prevChar = position.character;
       lastEnd = entry.end;
     }
 
-    return builder.build();
+    return { data };
   }
 
   signatureHelp(uri: string, position: Position): SignatureHelp | null {
@@ -388,6 +416,14 @@ export class SymbolIndex {
         if (targetType.kind === "string") return TString;
         return TUnknown;
       }
+      case "BinaryOp":
+        return binaryOpType(expr.operator.type, this.exprType(expr.left, scopeId), this.exprType(expr.right, scopeId));
+      case "UnaryOp":
+        return expr.operator.type === TokenType.BANG ? TBool : this.exprType(expr.operand, scopeId);
+      case "Ternary": {
+        const thenType = this.exprType(expr.thenExpr, scopeId);
+        return thenType.kind !== "unknown" ? thenType : this.exprType(expr.elseExpr, scopeId);
+      }
       default: return TUnknown;
     }
   }
@@ -462,7 +498,7 @@ export class SymbolIndex {
   private hoistDeclaration(uri: string, scope: Scope, stmt: Statement): void {
     switch (stmt.kind) {
       case "FunctionDecl":
-        this.declare(scope, uri, stmt.name, stmt.nameSpan, "function", `function ${stmt.name}`, functionType(stmt.params, stmt.returnType), true, false);
+        this.declare(scope, uri, stmt.name, stmt.nameSpan, "function", `function ${stmt.name}${paramListDetail(stmt.params)}${stmt.returnType !== null ? `: ${typeRefDetail(stmt.returnType)}` : ""}`, functionType(stmt.params, stmt.returnType), true, false);
         break;
       case "IntervalDecl":
         this.declare(scope, uri, stmt.name, stmt.nameSpan, "event", `interval ${stmt.name}`, TInterval, true, false);
@@ -477,7 +513,7 @@ export class SymbolIndex {
         this.declare(scope, uri, stmt.name, stmt.nameSpan, "event", `listener ${stmt.eventType} ${stmt.name}`, TListener, true, false);
         break;
       case "CommandDecl":
-        this.declare(scope, uri, stmt.name, stmt.nameSpan, "method", `command ${stmt.name}`, TCommand, true, false);
+        this.declare(scope, uri, stmt.name, stmt.nameSpan, "method", `command ${stmt.name}${paramListDetail(stmt.params)}`, TCommand, true, false);
         break;
       default:
         break;
@@ -755,21 +791,21 @@ export class SymbolIndex {
     const items = new Map<string, CompletionItem>();
     if (type.kind === "module") {
       for (const [label, fieldType] of type.fields) {
-        items.set(label, {
+        items.set(label, withDoc({
           label,
           kind: fieldType.kind === "callable" ? CompletionItemKind.Function : CompletionItemKind.Property,
           detail: typeToString(fieldType),
-        });
+        }));
       }
     }
     for (const label of this.builtinTypeProvider.methodNames(type)) {
       const methodType = this.builtinTypeProvider.methodType(type, label);
       if (methodType === null) continue;
-      items.set(label, {
+      items.set(label, withDoc({
         label,
         kind: CompletionItemKind.Method,
-        detail: typeToString(methodType),
-      });
+        detail: memberDetail(label, methodType),
+      }));
     }
     return [...items.values()].sort(compareCompletionItems);
   }
@@ -838,17 +874,218 @@ export class SymbolIndex {
     return Range.create(parsed.document.positionAt(span.start), parsed.document.positionAt(span.end));
   }
 
-  private pushToken(builder: SemanticTokensBuilder, document: TextDocument, start: number, end: number, type: string, modifiers: number): void {
-    const position = document.positionAt(start);
-    builder.push(position.line, position.character, Math.max(1, end - start), SEMANTIC_TOKEN_TYPES.indexOf(type as typeof SEMANTIC_TOKEN_TYPES[number]), modifiers);
+  documentHighlights(uri: string, position: Position): DocumentHighlight[] {
+    const occurrence = this.occurrenceAtPosition(uri, position);
+    if (occurrence?.symbolId == null) return [];
+    return this.occurrences
+      .filter((entry) => entry.uri === uri && entry.symbolId === occurrence.symbolId)
+      .map((entry) => ({
+        range: this.toRange(uri, entry.range),
+        kind: entry.declaration ? DocumentHighlightKind.Write : DocumentHighlightKind.Read,
+      }));
+  }
+
+  linkedEditingRanges(uri: string, position: Position): LinkedEditingRanges | null {
+    const occurrence = this.occurrenceAtPosition(uri, position);
+    if (occurrence?.symbolId == null) return null;
+    const symbol = this.symbolById(occurrence.symbolId);
+    if (symbol === null || symbol.builtin) return null;
+    const ranges = this.occurrences
+      .filter((entry) => entry.uri === uri && entry.symbolId === occurrence.symbolId)
+      .map((entry) => this.toRange(uri, entry.range));
+    return ranges.length > 0 ? { ranges } : null;
+  }
+
+  workspaceSymbols(query: string): SymbolInformation[] {
+    const needle = query.trim().toLowerCase();
+    const result: SymbolInformation[] = [];
+    for (const symbol of this.symbols) {
+      if (symbol.builtin) continue;
+      if (needle.length > 0 && !symbol.name.toLowerCase().includes(needle)) continue;
+      result.push({
+        name: symbol.name,
+        kind: symbolKindFor(symbol.role),
+        location: Location.create(symbol.uri, this.toRange(symbol.uri, symbol.selection)),
+      });
+    }
+    return result;
+  }
+
+  foldingRanges(uri: string): FoldingRange[] {
+    const parsed = this.docs.get(uri);
+    if (parsed === undefined) return [];
+    const ranges: FoldingRange[] = [];
+    const stack: Token[] = [];
+    for (const token of parsed.tokens) {
+      if (token.type === TokenType.LBRACE || token.type === TokenType.LBRACKET || token.type === TokenType.LPAREN) {
+        stack.push(token);
+      } else if (token.type === TokenType.RBRACE || token.type === TokenType.RBRACKET || token.type === TokenType.RPAREN) {
+        const opener = stack.pop();
+        if (opener === undefined) continue;
+        const startLine = parsed.document.positionAt(opener.start).line;
+        const endLine = parsed.document.positionAt(token.start).line;
+        if (endLine > startLine) ranges.push({ startLine, endLine, kind: FoldingRangeKind.Region });
+      }
+    }
+    return ranges;
+  }
+
+  selectionRanges(uri: string, positions: Position[]): SelectionRange[] {
+    const parsed = this.docs.get(uri);
+    if (parsed === undefined) return positions.map((position) => ({ range: Range.create(position, position) }));
+
+    const spans: Span[] = [];
+    for (const record of this.expressions) {
+      if (record.uri === uri) spans.push(record.expr.span);
+    }
+    collectStatementSpans(parsed.statements, spans);
+    for (const token of parsed.tokens) {
+      if (token.type !== TokenType.NEWLINE && token.type !== TokenType.EOF) spans.push({ start: token.start, end: token.end });
+    }
+
+    return positions.map((position) => this.selectionRangeAt(uri, parsed, spans, position));
+  }
+
+  private selectionRangeAt(uri: string, parsed: ParsedDocument, spans: Span[], position: Position): SelectionRange {
+    const offset = parsed.document.offsetAt(position);
+    const containing = spans
+      .filter((span) => span.start <= offset && offset <= span.end)
+      .sort((a, b) => spanLength(b) - spanLength(a));
+
+    let current: SelectionRange | undefined;
+    let lastKey = "";
+    for (const span of containing) {
+      const key = `${span.start}:${span.end}`;
+      if (key === lastKey) continue;
+      lastKey = key;
+      current = { range: this.toRange(uri, span), parent: current };
+    }
+    return current ?? { range: Range.create(position, position) };
+  }
+
+  documentLinks(uri: string): DocumentLink[] {
+    const parsed = this.docs.get(uri);
+    if (parsed === undefined) return [];
+    const currentPath = this.sourceDocuments.find((doc) => doc.uri === uri)?.pathSegments ?? [];
+    const links: DocumentLink[] = [];
+    for (const stmt of parsed.statements) {
+      if (stmt.kind !== "Using") continue;
+      let resolved: string[];
+      try {
+        resolved = resolveUsingPath(stmt, currentPath);
+      } catch {
+        continue;
+      }
+      const target = this.modulesByPath.get(resolved.join("."));
+      if (target === undefined) continue;
+      const range = this.usingPathRange(parsed, stmt.span);
+      if (range !== null) links.push({ range, target: target.uri });
+    }
+    return links;
+  }
+
+  private usingPathRange(parsed: ParsedDocument, span: Span): Range | null {
+    const tokens = parsed.tokens.filter((token) => token.start >= span.start && token.end <= span.end);
+    const start = tokens.findIndex((token) => token.type === TokenType.KW_USING);
+    if (start === -1) return null;
+    let first: Token | null = null;
+    let last: Token | null = null;
+    for (let i = start + 1; i < tokens.length; i++) {
+      if (tokens[i].type === TokenType.KW_AS) break;
+      if (first === null) first = tokens[i];
+      last = tokens[i];
+    }
+    if (first === null || last === null) return null;
+    return Range.create(parsed.document.positionAt(first.start), parsed.document.positionAt(last.end));
+  }
+
+  inlayHints(uri: string, range: Range): InlayHint[] {
+    const parsed = this.docs.get(uri);
+    if (parsed === undefined) return [];
+    const limit = { start: parsed.document.offsetAt(range.start), end: parsed.document.offsetAt(range.end) };
+    const hints: InlayHint[] = [];
+    const visit = (stmts: Statement[]): void => {
+      for (const stmt of stmts) this.inlayHintsForStatement(parsed, stmt, limit, hints, visit);
+    };
+    visit(parsed.statements);
+    return hints;
+  }
+
+  private inlayHintsForStatement(
+    parsed: ParsedDocument,
+    stmt: Statement,
+    limit: { start: number; end: number },
+    hints: InlayHint[],
+    visit: (stmts: Statement[]) => void,
+  ): void {
+    if (stmt.kind === "VarDecl" && stmt.typeName.name === "var" && within(stmt.nameSpan, limit)) {
+      const scope = this.scopeAt(parsed.uri, stmt.nameSpan.start);
+      const type = this.exprType(stmt.initializer, scope?.id ?? 0);
+      if (type.kind !== "unknown") {
+        hints.push(typeInlayHint(parsed.document, stmt.nameSpan.end, typeToString(type)));
+      }
+    } else if (stmt.kind === "ForEachStmt" && stmt.itemType === null && within(stmt.itemNameSpan, limit)) {
+      const scope = this.scopeAt(parsed.uri, stmt.itemNameSpan.start);
+      const iterableType = this.exprType(stmt.iterable, scope?.id ?? 0);
+      const elementType = iterableType.kind === "list" ? iterableType.elementType : null;
+      if (elementType !== null && elementType.kind !== "unknown") {
+        hints.push(typeInlayHint(parsed.document, stmt.itemNameSpan.end, typeToString(elementType)));
+      }
+    }
+    for (const body of statementBodies(stmt)) visit(body);
+  }
+
+  codeActions(uri: string, range: Range): CodeAction[] {
+    const parsed = this.docs.get(uri);
+    if (parsed === undefined) return [];
+    const start = parsed.document.offsetAt(range.start);
+    const end = parsed.document.offsetAt(range.end);
+    const actions: CodeAction[] = [];
+    for (const stmt of parsed.statements) {
+      if (stmt.kind !== "ListenerDecl") continue;
+      if (KNOWN_EVENTS.has(stmt.eventType)) continue;
+      if (stmt.eventTypeSpan.end <= start || stmt.eventTypeSpan.start >= end) continue;
+      for (const suggestion of closestEvents(stmt.eventType)) {
+        actions.push({
+          title: `Replace with '${suggestion}'`,
+          kind: CodeActionKind.QuickFix,
+          edit: { changes: { [uri]: [TextEdit.replace(this.toRange(uri, stmt.eventTypeSpan), suggestion)] } },
+        });
+      }
+    }
+    return actions;
+  }
+
+  codeLenses(uri: string): CodeLens[] {
+    const lenses: CodeLens[] = [];
+    for (const symbol of this.symbols) {
+      if (symbol.builtin || symbol.uri !== uri) continue;
+      if (!LENS_ROLES.has(symbol.role)) continue;
+      const references = this.occurrences.filter((entry) => entry.symbolId === symbol.id && !entry.declaration);
+      const range = this.toRange(uri, symbol.selection);
+      const locations = references.map((entry) => Location.create(entry.uri, this.toRange(entry.uri, entry.range)));
+      lenses.push({
+        range,
+        command: Command.create(
+          `${references.length} reference${references.length === 1 ? "" : "s"}`,
+          "editor.action.showReferences",
+          uri,
+          range.start,
+          locations,
+        ),
+      });
+    }
+    return lenses;
   }
 }
+
+const LENS_ROLES: ReadonlySet<SymbolRole> = new Set<SymbolRole>(["function", "method", "variable", "constant", "event"]);
 
 function parseDocument(doc: IndexSourceDocument): ParsedDocument | null {
   try {
     const document = TextDocument.create(doc.uri, "jetpack", 0, doc.text);
     const tokens = new Lexer(doc.text).tokenize();
-    const statements = new Parser(tokens).parseFile();
+    const statements = new Parser(tokens).parseFileTolerant().stmts;
     return { uri: doc.uri, text: doc.text, document, statements, tokens };
   } catch {
     return null;
@@ -1002,6 +1239,33 @@ function compareCompletionItems(a: CompletionItem, b: CompletionItem): number {
   return a.label.localeCompare(b.label);
 }
 
+interface CompletionData {
+  detail: string;
+}
+
+export function withDoc(item: CompletionItem): CompletionItem {
+  if (item.detail === undefined) return item;
+  return { ...item, data: { detail: item.detail } satisfies CompletionData };
+}
+
+export function resolveCompletionItem(item: CompletionItem): CompletionItem {
+  const data = item.data as CompletionData | undefined;
+  if (data?.detail === undefined || item.documentation !== undefined) return item;
+  return {
+    ...item,
+    documentation: { kind: MarkupKind.Markdown, value: "```jetpack\n" + data.detail + "\n```" },
+  };
+}
+
+function paramListDetail(params: Param[]): string {
+  const parts = params.map((param) => {
+    const type = param.typeName !== null ? typeRefDetail(param.typeName) : "var";
+    const suffix = param.default !== null ? " = …" : "";
+    return `${type} ${param.name}${suffix}`;
+  });
+  return `(${parts.join(", ")})`;
+}
+
 function spanLength(span: Span): number {
   return span.end - span.start;
 }
@@ -1029,4 +1293,109 @@ function isIdentifierStart(ch: string): boolean {
 
 function isIdentifierPart(ch: string): boolean {
   return isIdentifierStart(ch) || (ch >= "0" && ch <= "9");
+}
+
+const BOOL_RESULT_OPS: ReadonlySet<TokenType> = new Set([
+  TokenType.EQ_EQ, TokenType.BANG_EQ, TokenType.LT, TokenType.LT_EQ, TokenType.GT, TokenType.GT_EQ,
+  TokenType.AMP_AMP, TokenType.PIPE_PIPE,
+]);
+
+function binaryOpType(operator: TokenType, left: JetType, right: JetType): JetType {
+  if (BOOL_RESULT_OPS.has(operator)) return TBool;
+  if (operator === TokenType.STAR_STAR) return TFloat;
+  if (operator === TokenType.PLUS && (left.kind === "string" || right.kind === "string")) return TString;
+  if (left.kind === "float" || right.kind === "float") return TFloat;
+  if (left.kind === "int" && right.kind === "int") return TInt;
+  return TUnknown;
+}
+
+function within(span: Span, limit: { start: number; end: number }): boolean {
+  return span.start < limit.end && span.end > limit.start;
+}
+
+function symbolKindFor(role: SymbolRole): SymbolKind {
+  switch (role) {
+    case "function": return SymbolKind.Function;
+    case "method": return SymbolKind.Method;
+    case "module": return SymbolKind.Module;
+    case "parameter": return SymbolKind.Variable;
+    case "constant": return SymbolKind.Constant;
+    case "event": return SymbolKind.Event;
+    case "type": return SymbolKind.Class;
+    case "variable":
+    default:
+      return SymbolKind.Variable;
+  }
+}
+
+function typeInlayHint(document: TextDocument, offset: number, label: string): InlayHint {
+  return {
+    position: document.positionAt(offset),
+    label: `: ${label}`,
+    kind: InlayHintKind.Type,
+    paddingLeft: false,
+  };
+}
+
+function statementBodies(stmt: Statement): Statement[][] {
+  switch (stmt.kind) {
+    case "FunctionDecl":
+    case "IntervalDecl":
+    case "ScheduleDecl":
+    case "ListenerDecl":
+    case "WhileStmt":
+    case "ForEachStmt":
+      return [stmt.body];
+    case "IfStmt":
+      return [stmt.thenBody, ...stmt.elseIfClauses.map((clause) => clause.body), ...(stmt.elseBody !== null ? [stmt.elseBody] : [])];
+    case "TryStmt":
+      return [stmt.tryBody, ...stmt.catches.map((clause) => clause.body), ...(stmt.finallyBody !== null ? [stmt.finallyBody] : [])];
+    case "CommandDecl":
+      return commandBodies(stmt);
+    default:
+      return [];
+  }
+}
+
+function commandBodies(command: CommandDecl): Statement[][] {
+  const bodies: Statement[][] = [];
+  const code: Statement[] = [];
+  for (const item of command.bodyItems) {
+    if (item.kind === "code") code.push(item.stmt);
+    else if (item.kind === "default") bodies.push(item.body);
+    else bodies.push(...commandBodies(item.decl));
+  }
+  bodies.push(code);
+  return bodies;
+}
+
+function collectStatementSpans(stmts: Statement[], out: Span[]): void {
+  for (const stmt of stmts) {
+    out.push(stmt.span);
+    for (const body of statementBodies(stmt)) collectStatementSpans(body, out);
+  }
+}
+
+function closestEvents(name: string): string[] {
+  return [...KNOWN_EVENTS]
+    .map((event) => ({ event, distance: levenshtein(name.toLowerCase(), event.toLowerCase()) }))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 3)
+    .filter((entry) => entry.distance <= Math.max(3, Math.floor(name.length / 2)))
+    .map((entry) => entry.event);
+}
+
+function levenshtein(a: string, b: string): number {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const dist = Array.from({ length: rows }, () => new Array<number>(cols).fill(0));
+  for (let i = 0; i < rows; i++) dist[i][0] = i;
+  for (let j = 0; j < cols; j++) dist[0][j] = j;
+  for (let i = 1; i < rows; i++) {
+    for (let j = 1; j < cols; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dist[i][j] = Math.min(dist[i - 1][j] + 1, dist[i][j - 1] + 1, dist[i - 1][j - 1] + cost);
+    }
+  }
+  return dist[a.length][b.length];
 }

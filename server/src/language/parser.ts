@@ -48,9 +48,20 @@ const MUL_DIV_OPS: ReadonlySet<TokenType> = new Set([TokenType.STAR, TokenType.S
 const UNARY_OPS: ReadonlySet<TokenType> = new Set([TokenType.BANG, TokenType.MINUS]);
 const PREFIX_INC_DEC_OPS: ReadonlySet<TokenType> = new Set([TokenType.PLUS_PLUS, TokenType.MINUS_MINUS]);
 
+const STATEMENT_START: ReadonlySet<TokenType> = new Set([
+  ...TYPE_KEYWORDS,
+  TokenType.KW_CONST, TokenType.KW_FUNCTION, TokenType.KW_INTERVAL, TokenType.KW_SCHEDULE,
+  TokenType.KW_ENUM, TokenType.KW_LISTENER, TokenType.KW_COMMAND, TokenType.KW_MANIFEST,
+  TokenType.KW_USING, TokenType.KW_IF, TokenType.KW_WHILE, TokenType.KW_FOREACH,
+  TokenType.KW_TRY, TokenType.KW_RETURN, TokenType.KW_BREAK, TokenType.KW_CONTINUE,
+  TokenType.KW_PUBLIC, TokenType.KW_PRIVATE, TokenType.KW_PROTECTED, TokenType.AT,
+]);
+
 export class Parser {
   private pos = 0;
   private statementDepth = 0;
+  private tolerant = false;
+  private readonly errors: ParseError[] = [];
   private pendingCommandAnnotations: CommandAnnotations = EMPTY_COMMAND_ANNOTATIONS;
   private pendingListenerAnnotations: ListenerAnnotations = EMPTY_LISTENER_ANNOTATIONS;
 
@@ -102,26 +113,54 @@ export class Parser {
     const stmts: Statement[] = [];
     this.skipNewlines();
     while (!this.isAtEnd()) {
-      const pendingMeta: Metadata[] = [];
-      while (this.check(TokenType.AT)) {
-        pendingMeta.push(this.parseMetadata());
-        this.skipNewlines();
+      const before = this.pos;
+      try {
+        this.parseTopLevelInto(stmts);
+      } catch (e) {
+        if (!this.tolerant || !(e instanceof ParseError)) throw e;
+        this.errors.push(e);
+        this.synchronize(before, false);
       }
-      if (this.isAtEnd()) {
-        stmts.push(...pendingMeta);
-        break;
-      }
-      if (pendingMeta.length > 0 && this.isCommandDeclarationAhead()) {
-        this.pendingCommandAnnotations = this.buildCommandAnnotations(pendingMeta);
-      } else if (pendingMeta.length > 0 && this.isListenerDeclarationAhead()) {
-        this.pendingListenerAnnotations = this.buildListenerAnnotations(pendingMeta);
-      } else {
-        stmts.push(...pendingMeta);
-      }
-      stmts.push(this.parseTopLevelStatement());
       this.skipNewlines();
     }
     return stmts;
+  }
+
+  parseFileTolerant(): { stmts: Statement[]; errors: ParseError[] } {
+    this.tolerant = true;
+    const stmts = this.parseFile();
+    return { stmts, errors: this.errors };
+  }
+
+  private parseTopLevelInto(stmts: Statement[]): void {
+    const pendingMeta: Metadata[] = [];
+    while (this.check(TokenType.AT)) {
+      pendingMeta.push(this.parseMetadata());
+      this.skipNewlines();
+    }
+    if (this.isAtEnd()) {
+      stmts.push(...pendingMeta);
+      return;
+    }
+    if (pendingMeta.length > 0 && this.isCommandDeclarationAhead()) {
+      this.pendingCommandAnnotations = this.buildCommandAnnotations(pendingMeta);
+    } else if (pendingMeta.length > 0 && this.isListenerDeclarationAhead()) {
+      this.pendingListenerAnnotations = this.buildListenerAnnotations(pendingMeta);
+    } else {
+      stmts.push(...pendingMeta);
+    }
+    stmts.push(this.parseTopLevelStatement());
+  }
+
+  private synchronize(before: number, inBlock: boolean): void {
+    if (this.pos === before) this.advance();
+    while (!this.isAtEnd()) {
+      const type = this.peekType();
+      if (type === TokenType.NEWLINE || type === TokenType.SEMICOLON) return;
+      if (inBlock && type === TokenType.RBRACE) return;
+      if (STATEMENT_START.has(type)) return;
+      this.advance();
+    }
   }
 
   private isCommandDeclarationAhead(): boolean {
@@ -1011,7 +1050,14 @@ export class Parser {
       const stmts: Statement[] = [];
       this.skipNewlines();
       while (!this.check(TokenType.RBRACE) && !this.isAtEnd()) {
-        stmts.push(this.parseDeclarationOrStatement());
+        const before = this.pos;
+        try {
+          stmts.push(this.parseDeclarationOrStatement());
+        } catch (e) {
+          if (!this.tolerant || !(e instanceof ParseError)) throw e;
+          this.errors.push(e);
+          this.synchronize(before, true);
+        }
         this.skipNewlines();
       }
       this.expect(TokenType.RBRACE, "Expected '}' to close the block");
