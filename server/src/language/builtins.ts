@@ -15,6 +15,7 @@ import {
 export interface BuiltinTypeProvider {
   globalType(name: string): JetType | null;
   methodType(targetType: JetType, method: string): JetType | null;
+  methodNames(targetType: JetType): readonly string[];
   isKnownGlobal(name: string): boolean;
   globalNames(): ReadonlySet<string>;
 }
@@ -43,6 +44,10 @@ export class DefaultBuiltinTypeProvider implements BuiltinTypeProvider {
       if (type !== null) return type;
     }
     return null;
+  }
+
+  methodNames(targetType: JetType): readonly string[] {
+    return METHOD_CANDIDATES.filter((method) => this.methodType(targetType, method) !== null);
   }
 }
 
@@ -193,3 +198,43 @@ const METHOD_PROVIDERS: ReadonlyArray<MethodProvider> = [
   commandMethods,
   conversionMethods,
 ];
+
+const METHOD_CANDIDATES = [
+  "activate",
+  "append",
+  "ascend",
+  "contains",
+  "count",
+  "cron",
+  "deactivate",
+  "descend",
+  "destroy",
+  "endsWith",
+  "first",
+  "get",
+  "has",
+  "indexOf",
+  "isActive",
+  "join",
+  "keys",
+  "last",
+  "lastIndexOf",
+  "length",
+  "lower",
+  "nextRun",
+  "remove",
+  "replace",
+  "reverse",
+  "set",
+  "slice",
+  "split",
+  "startsWith",
+  "substring",
+  "toBool",
+  "toFloat",
+  "toInt",
+  "toString",
+  "trigger",
+  "trim",
+  "upper",
+] as const;

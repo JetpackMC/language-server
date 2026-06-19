@@ -50,7 +50,10 @@ export function completion(document: TextDocument, offset: number, index: Symbol
     return ANNOTATIONS.map((label) => ({ label, kind: CompletionItemKind.Property }));
   }
 
-  const items: CompletionItem[] = index?.completion(document.uri, offset) ?? [];
+  const text = document.getText();
+  const items: CompletionItem[] = index?.completion(document.uri, offset, text) ?? [];
+  if (isMemberCompletion(text, offset)) return items;
+
   const existingLabels = new Set(items.map((item) => item.label));
   for (const label of KEYWORDS) {
     if (!existingLabels.has(label)) items.push({ label, kind: CompletionItemKind.Keyword });
@@ -130,4 +133,9 @@ function symbol(
 
 function toRange(document: TextDocument, span: Span): Range {
   return { start: document.positionAt(span.start), end: document.positionAt(span.end) };
+}
+
+function isMemberCompletion(text: string, offset: number): boolean {
+  const prefix = text.slice(0, offset);
+  return /([A-Za-z_\p{L}][A-Za-z0-9_\p{L}]*)\.\s*$/u.test(prefix);
 }
