@@ -21,6 +21,7 @@ import {
   SEMANTIC_TOKEN_TYPES,
   SymbolIndex,
 } from "./symbolIndex";
+import { formatDocument, formatRange, formatOnType } from "./language/formatter";
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -46,6 +47,9 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       definitionProvider: true,
       referencesProvider: true,
       renameProvider: { prepareProvider: true },
+      documentFormattingProvider: true,
+      documentRangeFormattingProvider: true,
+      documentOnTypeFormattingProvider: { firstTriggerCharacter: "}", moreTriggerCharacter: ["\n"] },
       semanticTokensProvider: {
         legend: {
           tokenTypes: [...SEMANTIC_TOKEN_TYPES],
@@ -140,6 +144,21 @@ connection.onRenameRequest((params) => ensureSymbolIndex().rename(params));
 connection.languages.semanticTokens.on((params) =>
   ensureSymbolIndex().semanticTokens(params.textDocument.uri),
 );
+
+connection.onDocumentFormatting((params) => {
+  const document = documents.get(params.textDocument.uri);
+  return document !== undefined ? formatDocument(document) : [];
+});
+
+connection.onDocumentRangeFormatting((params) => {
+  const document = documents.get(params.textDocument.uri);
+  return document !== undefined ? formatRange(document, params.range) : [];
+});
+
+connection.onDocumentOnTypeFormatting((params) => {
+  const document = documents.get(params.textDocument.uri);
+  return document !== undefined ? formatOnType(document, params.position.line) : [];
+});
 
 function resolveWorkspaceFolder(params: InitializeParams): string | null {
   const folder = params.workspaceFolders?.[0]?.uri ?? params.rootUri ?? null;
