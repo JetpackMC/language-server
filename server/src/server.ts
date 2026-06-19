@@ -10,6 +10,8 @@ import {
   Diagnostic,
   DiagnosticSeverity,
   Range,
+  SemanticTokens,
+  SemanticTokensDelta,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { URI } from "vscode-uri";
@@ -55,7 +57,8 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
           tokenTypes: [...SEMANTIC_TOKEN_TYPES],
           tokenModifiers: [...SEMANTIC_TOKEN_MODIFIERS],
         },
-        full: true,
+        full: { delta: true },
+        range: true,
       },
     },
   };
@@ -144,7 +147,15 @@ connection.onPrepareRename((params) =>
 connection.onRenameRequest((params) => ensureSymbolIndex().rename(params));
 
 connection.languages.semanticTokens.on((params) =>
-  ensureSymbolIndex().semanticTokens(params.textDocument.uri),
+  fullSemanticTokens(params.textDocument.uri),
+);
+
+connection.languages.semanticTokens.onDelta((params) =>
+  deltaSemanticTokens(params.textDocument.uri, params.previousResultId),
+);
+
+connection.languages.semanticTokens.onRange((params) =>
+  ensureSymbolIndex().semanticTokens(params.textDocument.uri, params.range),
 );
 
 connection.onDocumentFormatting((params) => {
@@ -207,6 +218,48 @@ function runAnalysis(): void {
 function ensureSymbolIndex(): SymbolIndex {
   if (symbolIndex === null) rebuildSymbolIndex(workspace.documents());
   return symbolIndex!;
+}
+
+const previousSemanticTokens = new Map<string, { resultId: string; data: number[] }>();
+let semanticResultCounter = 0;
+
+function fullSemanticTokens(uri: string): SemanticTokens {
+  const data = ensureSymbolIndex().semanticTokens(uri).data;
+  const resultId = String(++semanticResultCounter);
+  previousSemanticTokens.set(uri, { resultId, data });
+  return { resultId, data };
+}
+
+function deltaSemanticTokens(uri: string, previousResultId: string): SemanticTokens | SemanticTokensDelta {
+  const previous = previousSemanticTokens.get(uri);
+  const data = ensureSymbolIndex().semanticTokens(uri).data;
+  const resultId = String(++semanticResultCounter);
+  if (previous === undefined || previous.resultId !== previousResultId) {
+    previousSemanticTokens.set(uri, { resultId, data });
+    return { resultId, data };
+  }
+  const edits = diffSemanticTokens(previous.data, data);
+  previousSemanticTokens.set(uri, { resultId, data });
+  return { resultId, edits };
+}
+
+function diffSemanticTokens(before: number[], after: number[]): SemanticTokensDelta["edits"] {
+  let prefix = 0;
+  const max = Math.min(before.length, after.length);
+  while (prefix < max && before[prefix] === after[prefix]) prefix++;
+
+  let suffix = 0;
+  while (
+    suffix < max - prefix &&
+    before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+  ) {
+    suffix++;
+  }
+
+  const deleteCount = before.length - prefix - suffix;
+  const data = after.slice(prefix, after.length - suffix);
+  if (deleteCount === 0 && data.length === 0) return [];
+  return [{ start: prefix, deleteCount, data }];
 }
 
 function rebuildSymbolIndex(docs: { uri: string; text: string }[]): void {

@@ -9,7 +9,6 @@ import {
   Range,
   RenameParams,
   SemanticTokens,
-  SemanticTokensBuilder,
   SignatureHelp,
   SignatureInformation,
   TextEdit,
@@ -240,10 +239,13 @@ export class SymbolIndex {
     };
   }
 
-  semanticTokens(uri: string): SemanticTokens {
+  semanticTokens(uri: string, range?: Range): SemanticTokens {
     const parsed = this.docs.get(uri);
-    const builder = new SemanticTokensBuilder();
-    if (parsed === undefined) return builder.build();
+    if (parsed === undefined) return { data: [] };
+
+    const limit = range !== null && range !== undefined
+      ? { start: parsed.document.offsetAt(range.start), end: parsed.document.offsetAt(range.end) }
+      : null;
 
     const entries: SemanticTokenEntry[] = [];
 
@@ -271,14 +273,23 @@ export class SymbolIndex {
 
     entries.sort((a, b) => a.start - b.start || a.end - b.end);
 
+    const data: number[] = [];
+    let prevLine = 0;
+    let prevChar = 0;
     let lastEnd = -1;
     for (const entry of entries) {
       if (entry.start < lastEnd) continue;
-      this.pushToken(builder, parsed.document, entry.start, entry.end, entry.type, entry.modifiers);
+      if (limit !== null && (entry.end <= limit.start || entry.start >= limit.end)) continue;
+      const position = parsed.document.positionAt(entry.start);
+      const deltaLine = position.line - prevLine;
+      const deltaChar = deltaLine === 0 ? position.character - prevChar : position.character;
+      data.push(deltaLine, deltaChar, Math.max(1, entry.end - entry.start), SEMANTIC_TOKEN_TYPES.indexOf(entry.type as typeof SEMANTIC_TOKEN_TYPES[number]), entry.modifiers);
+      prevLine = position.line;
+      prevChar = position.character;
       lastEnd = entry.end;
     }
 
-    return builder.build();
+    return { data };
   }
 
   signatureHelp(uri: string, position: Position): SignatureHelp | null {
@@ -847,10 +858,6 @@ export class SymbolIndex {
     return Range.create(parsed.document.positionAt(span.start), parsed.document.positionAt(span.end));
   }
 
-  private pushToken(builder: SemanticTokensBuilder, document: TextDocument, start: number, end: number, type: string, modifiers: number): void {
-    const position = document.positionAt(start);
-    builder.push(position.line, position.character, Math.max(1, end - start), SEMANTIC_TOKEN_TYPES.indexOf(type as typeof SEMANTIC_TOKEN_TYPES[number]), modifiers);
-  }
 }
 
 function parseDocument(doc: IndexSourceDocument): ParsedDocument | null {
