@@ -140,24 +140,31 @@ export class SymbolIndex {
   private readonly modulesByPath = new Map<string, ScriptModule>();
   private readonly moduleTypesByRoot = new Map<string, JetType>();
   private readonly builtinTypeProvider = new DefaultBuiltinTypeProvider();
+  private sourceDocuments: IndexSourceDocument[] = [];
   private nextSymbolId = 1;
   private nextScopeId = 1;
 
   static fromDocuments(documents: IndexSourceDocument[]): SymbolIndex {
     const index = new SymbolIndex();
+    index.sourceDocuments = documents;
     index.build(documents);
     return index;
   }
 
-  completion(uri: string, offset: number): CompletionItem[] {
+  completion(uri: string, offset: number, currentText?: string): CompletionItem[] {
     const parsed = this.docs.get(uri);
-    if (parsed === undefined) return [];
+    const text = currentText ?? parsed?.text;
+    if (text === undefined) return [];
 
-    const memberTarget = memberTargetBefore(parsed.text, offset);
-    if (memberTarget !== null) return this.memberCompletions(uri, offset, memberTarget);
+    const memberTarget = memberTargetBefore(text, offset);
+    if (memberTarget !== null) {
+      const index = parsed !== undefined ? this : this.recoveredIndexForCompletion(uri, offset, text);
+      return index?.memberCompletions(uri, offset, memberTarget) ?? [];
+    }
 
-    const usingPrefix = usingPrefixBefore(parsed.text, offset);
+    const usingPrefix = usingPrefixBefore(text, offset);
     if (usingPrefix !== null) return this.usingCompletions(usingPrefix);
+    if (parsed === undefined) return [];
 
     const items = new Map<string, CompletionItem>();
     for (const symbol of this.visibleSymbols(uri, offset)) {
@@ -745,13 +752,40 @@ export class SymbolIndex {
     const symbol = symbolId !== null ? this.symbolById(symbolId) : null;
     const type = symbol?.type ?? this.moduleTypesByRoot.get(targetName) ?? null;
     if (type === null) return [];
-    const fields = type.kind === "module" ? type.fields : null;
-    if (fields === null) return [];
-    return [...fields].map(([label, fieldType]) => ({
-      label,
-      kind: fieldType.kind === "callable" ? CompletionItemKind.Function : CompletionItemKind.Property,
-      detail: typeToString(fieldType),
-    })).sort(compareCompletionItems);
+    const items = new Map<string, CompletionItem>();
+    if (type.kind === "module") {
+      for (const [label, fieldType] of type.fields) {
+        items.set(label, {
+          label,
+          kind: fieldType.kind === "callable" ? CompletionItemKind.Function : CompletionItemKind.Property,
+          detail: typeToString(fieldType),
+        });
+      }
+    }
+    for (const label of this.builtinTypeProvider.methodNames(type)) {
+      const methodType = this.builtinTypeProvider.methodType(type, label);
+      if (methodType === null) continue;
+      items.set(label, {
+        label,
+        kind: CompletionItemKind.Method,
+        detail: typeToString(methodType),
+      });
+    }
+    return [...items.values()].sort(compareCompletionItems);
+  }
+
+  private recoveredIndexForCompletion(uri: string, offset: number, text: string): SymbolIndex | null {
+    const recoveredText = recoverIncompleteMemberAccessAt(text, offset);
+    if (recoveredText === text) return null;
+
+    const source = this.sourceDocuments.find((doc) => doc.uri === uri);
+    if (source === undefined) return null;
+
+    const recoveredDocuments = this.sourceDocuments.map((doc) =>
+      doc.uri === uri ? { ...doc, text: recoveredText } : doc,
+    );
+    const index = SymbolIndex.fromDocuments(recoveredDocuments);
+    return index.docs.has(uri) ? index : null;
   }
 
   private usingCompletions(prefix: string): CompletionItem[] {
@@ -819,6 +853,11 @@ function parseDocument(doc: IndexSourceDocument): ParsedDocument | null {
   } catch {
     return null;
   }
+}
+
+function recoverIncompleteMemberAccessAt(text: string, offset: number): string {
+  if (offset < 1 || text[offset - 1] !== ".") return text;
+  return `${text.slice(0, offset)}__jetpackCompletion${text.slice(offset)}`;
 }
 
 function functionType(params: Param[], returnType: TypeRef | null): JetType {
