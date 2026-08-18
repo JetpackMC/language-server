@@ -25,6 +25,7 @@ export const STANDARD_MODULE_TYPES: Map<string, NamedModuleType> = new Map([
   ["time", { dynamic: false, fields: timeFields() }],
   ["regex", { dynamic: false, fields: regexFields() }],
   ["bukkit", { dynamic: true, fields: new Map<string, JetType>() }],
+  ["plugins", { dynamic: false, fields: pluginsFields() }],
   ["http", { dynamic: false, fields: httpFields() }],
 ]);
 
@@ -154,6 +155,14 @@ function regexFields(): Map<string, JetType> {
     ["replaceAll", callable(TString, [signature([TString, TString, TString])])],
     ["split", callable(TList(TString), [signature([TString, TString])])],
     ["escape", callable(TString, [signature([TString])])],
+  ]);
+}
+
+function pluginsFields(): Map<string, JetType> {
+  return new Map<string, JetType>([
+    ["get", callable(TNullable(TUnknown), [signature([TString])])],
+    ["enabled", callable(TBool, [signature([TString])])],
+    ["type", callable(TUnknown, [signature([TString, TString])])],
   ]);
 }
 
