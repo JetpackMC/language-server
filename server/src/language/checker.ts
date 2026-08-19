@@ -360,6 +360,7 @@ export class TypeChecker {
       }
 
       case "CommandDecl": {
+        this.checkCommandSuggestions(stmt);
         this.checkCommandDecl(stmt, stmt.senderName);
         return;
       }
@@ -423,6 +424,26 @@ export class TypeChecker {
     }
     this.currentReturnType = prevReturn;
     this.popScope();
+  }
+
+  private checkCommandSuggestions(stmt: CommandDecl): void {
+    for (const [name, suggestion] of stmt.annotations.suggestions) {
+      const type = this.inferExpr(suggestion.expression);
+      const acceptsSuggestions = type.kind === "string" ||
+        type.kind === "list" && (
+          type.elementType.kind === "string" ||
+          suggestion.expression.kind === "ListLiteral" && suggestion.expression.elements.length === 0
+        );
+      if (!acceptsSuggestions) {
+        this.report(
+          `Suggestion for command parameter '${name}' must evaluate to string or list<string>, got '${typeToString(type)}'`,
+          suggestion.line,
+        );
+      }
+    }
+    for (const item of stmt.bodyItems) {
+      if (item.kind === "subcommand") this.checkCommandSuggestions(item.decl);
+    }
   }
 
   private checkBlock(stmts: Statement[], predefinedTypes?: Map<string, JetType>): void {

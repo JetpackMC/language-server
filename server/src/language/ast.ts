@@ -54,6 +54,7 @@ export interface CommandAnnotations {
   usage: string | null;
   aliases: string[];
   placeholders: Map<string, CommandPlaceholder>;
+  suggestions: Map<string, CommandSuggestion>;
 }
 
 export const EMPTY_COMMAND_ANNOTATIONS: CommandAnnotations = {
@@ -63,10 +64,17 @@ export const EMPTY_COMMAND_ANNOTATIONS: CommandAnnotations = {
   usage: null,
   aliases: [],
   placeholders: new Map(),
+  suggestions: new Map(),
 };
 
 export interface CommandPlaceholder {
   value: string;
+  line: number;
+  span: Span;
+}
+
+export interface CommandSuggestion {
+  expression: Expression;
   line: number;
   span: Span;
 }
@@ -241,7 +249,7 @@ export type Expression =
 export interface Metadata {
   kind: "Metadata";
   key: string;
-  value: string;
+  value: string | boolean | string[] | Expression;
   target: string | null;
   line: number;
   span: Span;

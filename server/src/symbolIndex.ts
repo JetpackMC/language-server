@@ -616,7 +616,10 @@ export class SymbolIndex {
     for (const stmt of catchClause.body) this.indexStatement(uri, stmt, scope);
   }
 
-  private indexCommand(uri: string, command: CommandDecl, parent: Scope): void {
+  private indexCommand(uri: string, command: CommandDecl, parent: Scope, suggestionScope: Scope = parent): void {
+    for (const suggestion of command.annotations.suggestions.values()) {
+      this.indexExpression(uri, suggestion.expression, suggestionScope);
+    }
     const commandBody = command.bodyItems.flatMap((item) => {
       if (item.kind === "code") return [item.stmt];
       if (item.kind === "default") return item.body;
@@ -630,7 +633,7 @@ export class SymbolIndex {
     for (const item of command.bodyItems) {
       if (item.kind === "code") this.indexStatement(uri, item.stmt, scope);
       else if (item.kind === "default") this.indexBlock(uri, item.body, scope, blockSpan(item.body, command.span));
-      else this.indexCommand(uri, item.decl, scope);
+      else this.indexCommand(uri, item.decl, scope, suggestionScope);
     }
   }
 
