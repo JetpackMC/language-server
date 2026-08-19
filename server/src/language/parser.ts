@@ -47,6 +47,7 @@ const ADD_SUB_OPS: ReadonlySet<TokenType> = new Set([TokenType.PLUS, TokenType.M
 const MUL_DIV_OPS: ReadonlySet<TokenType> = new Set([TokenType.STAR, TokenType.SLASH, TokenType.PERCENT]);
 const UNARY_OPS: ReadonlySet<TokenType> = new Set([TokenType.BANG, TokenType.MINUS]);
 const PREFIX_INC_DEC_OPS: ReadonlySet<TokenType> = new Set([TokenType.PLUS_PLUS, TokenType.MINUS_MINUS]);
+type AnnotationConstant = string | boolean | string[];
 
 const STATEMENT_START: ReadonlySet<TokenType> = new Set([
   ...TYPE_KEYWORDS,
@@ -64,6 +65,7 @@ export class Parser {
   private readonly errors: ParseError[] = [];
   private pendingCommandAnnotations: CommandAnnotations = EMPTY_COMMAND_ANNOTATIONS;
   private pendingListenerAnnotations: ListenerAnnotations = EMPTY_LISTENER_ANNOTATIONS;
+  private readonly annotationConstants = new Map<string, AnnotationConstant>();
 
   constructor(private readonly tokens: Token[]) {}
 
@@ -149,7 +151,9 @@ export class Parser {
     } else {
       stmts.push(...pendingMeta);
     }
-    stmts.push(this.parseTopLevelStatement());
+    const stmt = this.parseTopLevelStatement();
+    stmts.push(stmt);
+    this.registerAnnotationConstant(stmt);
   }
 
   private synchronize(before: number, inBlock: boolean): void {
@@ -182,13 +186,18 @@ export class Parser {
     let usage: string | null = null;
     let aliases: string[] = [];
     const placeholders = new Map<string, { value: string; line: number; span: Span }>();
+    const suggestions = new Map<string, { expression: Expression; line: number; span: Span }>();
     for (const m of meta) {
       switch (m.key) {
-        case "description": description = m.value; break;
-        case "permission": permission = m.value; break;
-        case "permission_message": permissionMessage = m.value; break;
-        case "usage": usage = m.value; break;
-        case "aliases": aliases = this.parseAliasList(m.value); break;
+        case "description": description = this.metadataScalar(m); break;
+        case "permission": permission = this.metadataScalar(m); break;
+        case "permission_message": permissionMessage = this.metadataScalar(m); break;
+        case "usage": usage = this.metadataScalar(m); break;
+        case "aliases":
+          if (Array.isArray(m.value)) aliases = m.value;
+          else if (typeof m.value === "string") aliases = [m.value];
+          else throw new ParseError("Metadata '@aliases' expects a string or string array constant", m.line, m.span);
+          break;
         case "placeholder":
           if (m.target === null) {
             throw new ParseError(
@@ -204,31 +213,56 @@ export class Parser {
               m.span,
             );
           }
-          placeholders.set(m.target, { value: m.value, line: m.line, span: m.span });
+          placeholders.set(m.target, { value: this.metadataScalar(m), line: m.line, span: m.span });
           break;
+        case "suggest": {
+          if (m.target === null) {
+            throw new ParseError(
+              "Metadata '@suggest' expects a command parameter name and expression",
+              m.line,
+              m.span,
+            );
+          }
+          if (suggestions.has(m.target)) {
+            throw new ParseError(
+              `Suggestion for command parameter '${m.target}' is already declared`,
+              m.line,
+              m.span,
+            );
+          }
+          if (typeof m.value !== "object" || Array.isArray(m.value)) {
+            throw new ParseError("Metadata '@suggest' expects a suggestion expression", m.line, m.span);
+          }
+          suggestions.set(m.target, { expression: m.value, line: m.line, span: m.span });
+          break;
+        }
       }
     }
-    return { description, permission, permissionMessage, usage, aliases, placeholders };
+    return { description, permission, permissionMessage, usage, aliases, placeholders, suggestions };
   }
 
   private buildListenerAnnotations(meta: Metadata[]): ListenerAnnotations {
     let priority: string | null = null;
     let ignoreCancelled = false;
     for (const m of meta) {
-      if (m.key === "priority") priority = m.value;
-      else if (m.key === "ignoreCancelled") ignoreCancelled = m.value.trim().toLowerCase() === "true";
+      if (m.key === "priority") priority = this.metadataScalar(m);
+      else if (m.key === "ignoreCancelled") {
+        if (typeof m.value === "boolean") ignoreCancelled = m.value;
+        else ignoreCancelled = this.metadataScalar(m).trim().toLowerCase() === "true";
+      }
     }
     return { priority, ignoreCancelled };
   }
 
-  private parseAliasList(raw: string): string[] {
-    const trimmed = raw.trim();
-    if (trimmed.length === 0) return [];
-    const inner =
-      trimmed.startsWith("[") && trimmed.endsWith("]")
-        ? trimmed.substring(1, trimmed.length - 1)
-        : trimmed;
-    return inner.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  private metadataScalar(metadata: Metadata): string {
+    if (typeof metadata.value !== "string") {
+      throw new ParseError(
+        `Metadata '@${metadata.key}' expects a string literal or string const`,
+        metadata.line,
+        metadata.span,
+      );
+    }
+    return metadata.value;
   }
 
   private parseTopLevelStatement(): Statement {
@@ -243,20 +277,21 @@ export class Parser {
     const startTok = this.peek();
     this.expect(TokenType.AT, "Expected '@'");
     const key = this.expect(TokenType.IDENTIFIER, "Expected metadata key after '@'").value;
-    const target = key === "placeholder"
-      ? this.expect(TokenType.IDENTIFIER, "Metadata '@placeholder' expects a parameter name").value
+    const target = key === "placeholder" || key === "suggest"
+      ? this.expect(TokenType.IDENTIFIER, `Metadata '@${key}' expects a command parameter name`).value
       : null;
-    const value = this.expect(
-      TokenType.STRING_LITERAL,
-      key === "placeholder"
-        ? "Metadata '@placeholder' expects a string literal placeholder"
-        : `Metadata '@${key}' expects a string literal value`,
-    ).value;
+    const value = this.parseMetadataValue(key);
     if (!this.isAtEnd() && !this.check(TokenType.NEWLINE) && !this.check(TokenType.SEMICOLON)) {
       const t = this.peek();
       const expected = key === "placeholder"
-        ? "a parameter name and one string literal value"
-        : "exactly one string literal value";
+        ? "a parameter name and one string literal or string const"
+        : key === "aliases"
+          ? "one string, string array, or compatible const"
+          : key === "ignoreCancelled"
+            ? "one bool, string, or compatible const"
+            : key === "suggest"
+              ? "a command parameter name and one expression"
+              : "one string literal or string const";
       throw new ParseError(
         `Metadata '@${key}' must contain ${expected}`,
         t.line,
@@ -264,6 +299,92 @@ export class Parser {
       );
     }
     return { kind: "Metadata", key, value, target, line: startTok.line, span: this.spanFrom(startTok) };
+  }
+
+  private parseMetadataValue(key: string): Metadata["value"] {
+    if (key === "suggest") return this.parseExpression();
+    if (key === "aliases" && this.check(TokenType.LBRACKET)) return this.parseMetadataStringList();
+    if (this.check(TokenType.STRING_LITERAL)) return this.advance().value;
+    if (this.check(TokenType.BOOL_LITERAL)) return this.advance().value === "true";
+    if (this.check(TokenType.IDENTIFIER)) {
+      const reference = this.advance();
+      const value = this.annotationConstants.get(reference.value);
+      if (value !== undefined) return value;
+      throw new ParseError(
+        `Metadata '@${key}' must reference an annotation-compatible const declared earlier`,
+        reference.line,
+        { start: reference.start, end: reference.end },
+      );
+    }
+    const message = key === "placeholder"
+      ? "Metadata '@placeholder' expects a string literal or string const"
+      : key === "aliases"
+        ? "Metadata '@aliases' expects a string, string array, or compatible const"
+        : key === "ignoreCancelled"
+          ? "Metadata '@ignoreCancelled' expects a bool, string, or compatible const"
+          : `Metadata '@${key}' expects a string literal or string const`;
+    const token = this.peek();
+    throw new ParseError(message, token.line, { start: token.start, end: token.end });
+  }
+
+  private parseMetadataStringList(): string[] {
+    this.expect(TokenType.LBRACKET, "Expected '[' to start alias array");
+    this.skipNewlines();
+    const values: string[] = [];
+    while (!this.check(TokenType.RBRACKET) && !this.isAtEnd()) {
+      if (this.check(TokenType.STRING_LITERAL)) {
+        values.push(this.advance().value);
+      } else if (this.check(TokenType.IDENTIFIER)) {
+        const reference = this.advance();
+        const value = this.annotationConstants.get(reference.value);
+        if (typeof value !== "string") {
+          throw new ParseError(
+            "Alias array values must be string literals or string consts declared earlier",
+            reference.line,
+            { start: reference.start, end: reference.end },
+          );
+        }
+        values.push(value);
+      } else {
+        const token = this.peek();
+        throw new ParseError(
+          "Alias array values must be string literals or string consts declared earlier",
+          token.line,
+          { start: token.start, end: token.end },
+        );
+      }
+      this.skipNewlines();
+      if (!this.check(TokenType.RBRACKET)) {
+        this.expect(TokenType.COMMA, "Expected ',' or ']' after alias");
+        this.skipNewlines();
+      }
+    }
+    this.expect(TokenType.RBRACKET, "Expected ']' to close alias array");
+    return values;
+  }
+
+  private registerAnnotationConstant(stmt: Statement): void {
+    if (stmt.kind !== "VarDecl" || !stmt.isConst) return;
+    const value = this.annotationConstantValue(stmt.initializer);
+    if (value !== null) this.annotationConstants.set(stmt.name, value);
+  }
+
+  private annotationConstantValue(expr: Expression): AnnotationConstant | null {
+    switch (expr.kind) {
+      case "StringLiteral": return expr.value;
+      case "BoolLiteral": return expr.value;
+      case "Identifier": return this.annotationConstants.get(expr.name) ?? null;
+      case "ListLiteral": {
+        const values: string[] = [];
+        for (const element of expr.elements) {
+          const value = this.annotationConstantValue(element);
+          if (typeof value !== "string") return null;
+          values.push(value);
+        }
+        return values;
+      }
+      default: return null;
+    }
   }
 
   private parseUsing(): Statement {
@@ -686,6 +807,7 @@ export class Parser {
         : bodyItems;
 
     this.validateCommandPlaceholders(params, annotations);
+    this.validateCommandSuggestions(params, annotations);
     return {
       kind: "CommandDecl",
       access,
@@ -716,6 +838,19 @@ export class Parser {
           `Placeholder for command parameter '${name}' cannot be blank`,
           placeholder.line,
           placeholder.span,
+        );
+      }
+    }
+  }
+
+  private validateCommandSuggestions(params: Param[], annotations: CommandAnnotations): void {
+    const paramNames = new Set(params.map((param) => param.name));
+    for (const [name, suggestion] of annotations.suggestions) {
+      if (!paramNames.has(name)) {
+        throw new ParseError(
+          `Suggestion references unknown command parameter '${name}'`,
+          suggestion.line,
+          suggestion.span,
         );
       }
     }
