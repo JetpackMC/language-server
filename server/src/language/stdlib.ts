@@ -25,6 +25,7 @@ export const STANDARD_MODULE_TYPES: Map<string, NamedModuleType> = new Map([
   ["time", { dynamic: false, fields: timeFields() }],
   ["regex", { dynamic: false, fields: regexFields() }],
   ["bukkit", { dynamic: true, fields: new Map<string, JetType>() }],
+  ["paper", { dynamic: true, fields: new Map<string, JetType>() }],
   ["plugins", { dynamic: false, fields: pluginsFields() }],
   ["http", { dynamic: false, fields: httpFields() }],
 ]);
