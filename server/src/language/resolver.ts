@@ -208,6 +208,7 @@ export class NameResolver {
 
       case "CommandDecl": {
         if (!this.isFileScope) this.error("Command can only be declared at file scope", stmt.line);
+        this.resolveCommandSuggestions(stmt);
         this.withDeclarationContext(true, false, false, () => {
           this.resolveCommandDecl(stmt, stmt.senderName);
         });
@@ -303,6 +304,15 @@ export class NameResolver {
       }
     }
     this.popScope();
+  }
+
+  private resolveCommandSuggestions(stmt: CommandDecl): void {
+    for (const suggestion of stmt.annotations.suggestions.values()) {
+      this.resolveExpr(suggestion.expression);
+    }
+    for (const item of stmt.bodyItems) {
+      if (item.kind === "subcommand") this.resolveCommandSuggestions(item.decl);
+    }
   }
 
   private resolveBlock(stmts: Statement[]): void {
